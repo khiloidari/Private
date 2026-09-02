@@ -16,15 +16,13 @@
   html,body{margin:0;padding:0;background:#EEF0F4;overscroll-behavior-y:contain}
   body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
   input,select,textarea{font-size:16px !important}   /* stops iOS zooming on focus */
-  @media(max-width:560px){
+  @media(max-width:899px){
     #et,#pv{padding:12px !important}
     .runway{grid-template-columns:repeat(2,1fr) !important}
     .ed{flex-wrap:wrap !important}
     .ed input[type=text]{flex:1 1 100% !important}
     .ed input[type=number],.ed select{flex:1 1 auto !important}
     .row .amt{font-size:12px !important}
-    .tx{flex-wrap:wrap}
-    .tx .t{flex:1 1 60%}
     table,.bedit{font-size:12px}
   }
   .nav{display:flex;gap:8px;padding:10px 12px 0;font-family:'IBM Plex Sans',sans-serif}
@@ -122,6 +120,24 @@
     font-size:10px;padding:4px 6px;flex-shrink:0;line-height:1}
   .mv:hover{color:var(--ink)}
   .addrow{display:flex;gap:6px;margin-top:7px}
+  .mobnav{display:none}
+  @media(max-width:899px){
+    #et{padding-bottom:78px !important}
+    .mobnav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--card);
+      border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom));gap:4px}
+    .mobnav button{flex:1;border:none;background:none;font-family:var(--body);font-size:11px;font-weight:600;
+      color:var(--muted);padding:9px 2px;border-radius:9px}
+    .mobnav button.on{background:var(--ink);color:var(--card)}
+    .mobnav button.prime{color:var(--teal)}
+    .mobnav button.prime.on{background:var(--teal);color:var(--card)}
+    #et[data-mob="home"] [data-sec]:not([data-sec="home"]),
+    #et[data-mob="entries"] [data-sec]:not([data-sec="entries"]),
+    #et[data-mob="add"] [data-sec]:not([data-sec="add"]),
+    #et[data-mob="cards"] [data-sec]:not([data-sec="cards"]),
+    #et[data-mob="more"] [data-sec]:not([data-sec="more"]){display:none !important}
+    #et:not([data-mob="home"]) .bar h1{display:none}
+    #et:not([data-mob="home"]) .bar{margin-bottom:8px}
+  }
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
@@ -171,7 +187,7 @@ const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:""};
 let cur=new Date(), view="variable", pane="cats", txType="expense", mainTab="overview";
 let catTab="expense"; const TR=()=>catTab==="income"?S.itree:S.tree;
-let fixing=null; let refFor=null; let editTx=null, txq="", showAllTx=false, restoreArm=null, pendingRestore=null; let open={}, gopen={}, sopen={}, showAll=false, edit=false, gedit=false, arm=null, ready=false;
+let fixing=null; let refFor=null; let mobTab="home"; let editTx=null, txq="", showAllTx=false, restoreArm=null, pendingRestore=null; let open={}, gopen={}, sopen={}, showAll=false, edit=false, gedit=false, arm=null, ready=false;
 
 const inr=n=>{
   const v=Math.round(Math.abs(+n||0)*100)/100;
@@ -1052,8 +1068,13 @@ function render(){
   S.groups.forEach(g=>g.accts.forEach(a=>{const b=balance(a.name);
     if(g.kind==="liability")liab+=-b; else assets+=b;}));
 
-  document.getElementById("et").innerHTML=`
-  <div class="bar">
+  const root=document.getElementById("et"); root.setAttribute("data-mob",mobTab);
+  root.innerHTML=`
+  <div class="mobnav">
+    ${[["home","Home"],["entries","Entries"],["add","+ Add"],["cards","Cards"],["more","More"]].map(([k,l])=>
+      `<button class="${mobTab===k?"on":""}${k==="add"?" prime":""}" onclick="setMob('${k}')">${l}</button>`).join("")}
+  </div>
+  <div class="bar" data-sec="home">
     <div><h1>Expense tracker</h1>
       <div class="sub">${new Date().toLocaleString("en-IN",{weekday:"short",day:"numeric",month:"short",
         year:"numeric",hour:"2-digit",minute:"2-digit"})} &middot; ${S.tree.length} categories &middot;
@@ -1063,7 +1084,7 @@ function render(){
         ${dirty?"UNSAVED":mode==="app"?"saved to your account":mode==="local"?"saved in this browser":fileHandle?"saved to "+esc(fileName):"not saving"}</span>
     <div class="mo"><button onclick="shift(-1)">&lsaquo;</button><span>${mname(cur)}</span><button onclick="shift(1)">&rsaquo;</button></div></div>
   </div>
-  ${cardsWithCycle().length?`<div class="sub" style="margin:-8px 0 14px">
+  ${cardsWithCycle().length?`<div class="sub" data-sec="home" style="margin:-8px 0 14px">
     ${mname(cur)} covers ${cardsWithCycle().map(a=>{
       const sd=+a.stmtDay, y=cur.getFullYear(), mo=cur.getMonth();
       const from=new Date(y,mo-1,Math.min(sd,dimOf(y,mo-1))+1);
@@ -1071,7 +1092,7 @@ function render(){
       return `<b>${esc(a.name)}</b> ${fdate(from)}–${fdate(to)}`;}).join(" &middot; ")}
     &middot; everything else 1–${dimOf(cur.getFullYear(),cur.getMonth())} ${mname(cur).split(" ")[0]}</div>`:""}
 
-  <div class="runway">
+  <div class="runway" data-sec="home">
     <div class="stat"><div class="k">Spent${view!=="all"?" &middot; "+view:""}</div>
       <div class="v" style="color:${col}">${inr(spent)}</div>
       ${view!=="all"?`<div style="font-size:10px;margin-top:3px;color:var(--muted)">${inr(allSpent)} all</div>`:""}</div>
@@ -1088,14 +1109,14 @@ function render(){
       <div class="v" style="color:var(--violet)">${inr(assets-liab)}</div></div>
   </div>
 
-  ${mode==="none"&&!fileHandle?`<div class="card" style="background:#FBE9EB;border-color:#E5BFC5;color:#7A2833;font-size:12px;line-height:1.55">
+  ${mode==="none"&&!fileHandle?`<div class="card" data-sec="home" style="background:#FBE9EB;border-color:#E5BFC5;color:#7A2833;font-size:12px;line-height:1.55">
     <b>Nothing can save automatically here${storeErr?" ("+storeErr+")":""}.</b>
     ${canLinkFile()?`Link a file once and it will save there on every change — no downloads.
       <button class="btn" style="margin-top:9px" onclick="linkFile()">Link a file for auto-save</button>`
       :`Your data lives in this tab only. Download it before closing.
       <button class="btn" style="margin-top:9px" onclick="downloadData()">Download data file</button>`}
   </div>`:""}
-  <div class="card" style="padding:14px 16px">
+  <div class="card" data-sec="home" style="padding:14px 16px">
     <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
       <span>${(pct*100).toFixed(0)}% of budget used</span>
       <span class="num">${left>0?left+" days left":"month closed"}</span></div>
@@ -1104,13 +1125,13 @@ function render(){
 
   <div class="grid">
     <div>
-      <div class="tabs" style="margin-bottom:12px">
+      <div class="tabs" data-sec="home" style="margin-bottom:12px">
         <button class="tab ${mainTab==="overview"?"on":""}" onclick="setMain('overview')">Overview</button>
         <button class="tab ${mainTab==="analytics"?"on":""}" onclick="setMain('analytics')">Analytics</button>
       </div>
-      <div style="display:${mainTab==="analytics"?"block":"none"}">${mainTab==="analytics"?analytics():""}</div>
+      <div data-sec="home" style="display:${mainTab==="analytics"?"block":"none"}">${mainTab==="analytics"?analytics():""}</div>
       <div style="display:${mainTab==="overview"?"block":"none"}">
-      <div class="card">
+      <div class="card" data-sec="home">
         <div class="tabs">
           <button class="tab ${view==="variable"?"on":""}" onclick="setView('variable')">Variable</button>
           <button class="tab ${view==="fixed"?"on":""}" onclick="setView('fixed')">Fixed</button>
@@ -1138,7 +1159,7 @@ function render(){
 
       ${(()=>{const o=openSplits(); if(!o.length)return "";
         const tot=o.reduce((a,t)=>a+outstanding(t),0);
-        return `<div class="card">
+        return `<div class="card" data-sec="cards">
           <h2>Owed to you &middot; ${inr(tot)}</h2>
           ${o.map(t=>`<div class="row" style="cursor:default">
             <div class="nm">${esc(t.sub||t.note||"entry")}
@@ -1152,7 +1173,7 @@ function render(){
         </div>`;})()}
       ${cardsPanel()}
 
-      <div class="card">
+      <div class="card" data-sec="cards">
         <h2>Account balances</h2>
         ${S.groups.map(g=>{
           const tot=g.accts.reduce((a,x)=>a+balance(x.name),0);
@@ -1173,7 +1194,7 @@ function render(){
           <div class="amt" style="color:var(--violet);font-weight:700">${inr(assets-liab)}</div></div>
       </div>
 
-      <div class="card">
+      <div class="card" data-sec="entries">
         ${(()=>{
           const all=monthTx(), hit=filterTx(all);
           const inSum=hit.filter(t=>t.type==="income").reduce((a,t)=>a+t.amount,0);
@@ -1193,7 +1214,7 @@ function render(){
           Entries marked <span class="pill" style="background:#EFEAF6;color:var(--violet)">next cycle</span>
           were bought after their card's bill date, so they count here rather than in the month they were made.</div>`:""}
         ${(()=>{const hit=filterTx(monthTx()).sort((a,b)=>(b.date+(b.time||"00:00")).localeCompare(a.date+(a.time||"00:00")));
-          const cap=showAllTx?hit.length:25;
+          const cap=showAllTx?hit.length:(window.innerWidth<900?12:25);
           return hit.slice(0,cap);})().map(t=>{
           const c=t.type==="income"||t.type==="refund"?"var(--teal)":t.type==="transfer"?"var(--violet)":"var(--ink)";
           const bg=t.type==="income"||t.type==="refund"?"#E3F1EE":t.type==="transfer"?"#E8E7F2":"#EDEFF3";
@@ -1217,7 +1238,8 @@ function render(){
             <button class="x" onclick="del('${t.id}')" title="Delete">&times;</button></div>`;}).join("")}
         ${(()=>{const n=filterTx(monthTx()).length;
           if(!n)return carryTx().length?"":`<div class="empty">${txq?"Nothing matches that filter.":"Nothing logged yet."}</div>`;
-          if(n>25)return `<button class="btn ghost sm" style="width:100%;margin-top:9px" onclick="toggleAllTx()">
+          const lim=window.innerWidth<900?12:25;
+          if(n>lim)return `<button class="btn ghost sm" style="width:100%;margin-top:9px" onclick="toggleAllTx()">
             ${showAllTx?"Show fewer":"Show all "+n+" entries"}</button>`;
           return "";})()}
         ${carryTx().length?`
@@ -1244,7 +1266,7 @@ function render(){
     </div>
 
     <div>
-      <div class="card">
+      <div class="card" data-sec="add">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:11px">
           <h2 style="margin:0">${editTx?"Edit entry":"Record"}</h2>
           ${editTx?`<button class="btn ghost sm" onclick="cancelEdit()">Cancel</button>`:""}</div>
@@ -1303,7 +1325,7 @@ function render(){
         <button class="btn" onclick="add()">${editTx?"Update":"Record"} ${txType}</button>
       </div>
 
-      <div class="card">
+      <div class="card" data-sec="more">
         <div class="tabs">
           <button class="tab ${pane==="cats"?"on":""}" onclick="setPane('cats')">Categories</button>
           <button class="tab ${pane==="budget"?"on":""}" onclick="setPane('budget')">Budget</button>
@@ -1349,7 +1371,7 @@ function render(){
           ${gedit?acctEdit():acctView()}`}
       </div>
 
-      <div class="card">
+      <div class="card" data-sec="more">
         <h2>Save &amp; restore</h2>
         <div class="bedit" style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:10px">
           <span>Saving to</span>
@@ -1545,7 +1567,7 @@ function cardsPanel(){
     totOut+=h.out;totBlock+=h.blocked;totEmi+=h.emiBlock;});
   const totLim=distinctPools().reduce((a2,p)=>a2+p.limit,0);
   const totUtil=totLim?totBlock/totLim:null;
-  return `<div class="card">
+  return `<div class="card" data-sec="cards">
     <h2>Credit cards</h2>
     <div class="runway" style="margin-bottom:12px">
       <div class="stat"><div class="k">Owed now</div><div class="v" style="color:${totOut>0?"var(--red)":"var(--teal)"}">${inr(totOut)}</div></div>
@@ -1803,8 +1825,9 @@ function shift(n){cur=new Date(cur.getFullYear(),cur.getMonth()+n,1);arm=null;re
 function setView(v){view=v;render();}
 function setPane(p){pane=p;arm=null;render();}
 function setMain(t){mainTab=t;arm=null;render();}
+function setMob(t){mobTab=t;arm=null;render();window.scrollTo(0,0);}
 function setTx(t){txType=t;render();}
-function reimburse(id){refFor=id;txType="refund";editTx=null;render();
+function reimburse(id){refFor=id;txType="refund";editTx=null;mobTab="add";render();
   toast("Recording a contribution against that expense");}
 function toggleAll(){showAll=!showAll;render();}
 function toggleEdit(){edit=!edit;arm=null;render();}
@@ -1858,7 +1881,7 @@ function del(id){if(editTx&&editTx.id===id)editTx=null;
   S.txs=S.txs.filter(t=>t.id!==id);save();render();}
 function editEntry(id){
   const t=S.txs.find(x=>x.id===id); if(!t)return;
-  editTx=t; txType=t.type||"expense"; render();
+  editTx=t; txType=t.type||"expense"; mobTab="add"; render();
   toast("Editing — change what you need, then Update");}
 function cancelEdit(){editTx=null;render();}
 function ruleFrom(id){
