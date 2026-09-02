@@ -168,7 +168,7 @@ const DEF_ITREE=[
 const freshITree=()=>DEF_ITREE.map(([c,subs])=>({name:c,subs:subs.map(n=>({name:n}))}));
 const UNASSIGNED="Unassigned", NOACCT="No account";
 const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
-let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0};
+let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:""};
 let cur=new Date(), view="variable", pane="cats", txType="expense", mainTab="overview";
 let catTab="expense"; const TR=()=>catTab==="income"?S.itree:S.tree;
 let fixing=null; let refFor=null; let editTx=null, txq="", showAllTx=false, restoreArm=null, pendingRestore=null; let open={}, gopen={}, sopen={}, showAll=false, edit=false, gedit=false, arm=null, ready=false;
@@ -409,6 +409,7 @@ function hydrate(p){
   S.rules=Array.isArray(p.rules)?p.rules:[];
   S.income=+p.income||0;
   S.carry=!!p.carry;              // budget rollover setting
+  S.budgetStart=(p.budgetStart||"").slice(0,7);   // months before this have no budget
   return true;
 }
 async function readSaved(k){
@@ -593,7 +594,9 @@ function firstActiveMonth(){
 function carryMap(ix,upto){
   const out={};
   if(!S.carry)return out;
-  const start=firstActiveMonth(); if(!start||start>=upto)return out;
+  let start=firstActiveMonth(); if(!start)return out;
+  if(S.budgetStart&&S.budgetStart>start)start=S.budgetStart;
+  if(start>=upto)return out;
   S.tree.forEach(h=>{
     const cat=h.mode==="cat";
     const budget=cat?(+h.budget||0):h.subs.reduce((a,x)=>a+(+x.budget||0),0);
@@ -676,6 +679,9 @@ function moveSubTo(i,j,ti){
   T[ti].subs.push(sub);
   open[T[ti].name]=true; save(); render();
   toast(sub.name+" moved to "+T[ti].name);}
+function setBudgetStart(v){S.budgetStart=(v||"").slice(0,7);save();render();
+  toast(S.budgetStart?"Budgets apply from "+cycLabel(S.budgetStart)+" "+S.budgetStart.slice(0,4)+" — earlier months carry nothing":"Budgets apply from your first entry");}
+const budgetsOn=k=>!S.budgetStart||k>=S.budgetStart;
 function setCarry(v){S.carry=!!v;save();render();
   toast(v?"Leftovers and overspends now roll forward":"Each month stands alone again");}
 function setMode(i,v){S.tree[i].mode=v;save();render();}
@@ -1013,7 +1019,7 @@ function render(){
   // totals across every category, regardless of the Variable/Fixed tab
   let allBudget=0,allSpent=0;
   S.tree.forEach(h=>{
-    allBudget+=h.mode==="cat"?(+h.budget||0):h.subs.reduce((a,x)=>a+(+x.budget||0),0);
+    if(budgetsOn(mk(cur)))allBudget+=h.mode==="cat"?(+h.budget||0):h.subs.reduce((a,x)=>a+(+x.budget||0),0);
     h.subs.forEach(x=>{allSpent+=sp[x.name]||0;});});
   let spent=0,budget=0,carryTotal=0; const groups=[];
   S.tree.forEach(h=>{
@@ -1023,8 +1029,10 @@ function render(){
     if(!vis.length&&!(cat&&(+h.budget||0)&&inView(h.type||"V")))return;
     const subs=vis.map(s=>[s.name,sp[s.name]||0,cat?null:(s.budget||0)]);
     const cs=subs.reduce((a,x)=>a+x[1],0);
-    const base=cat?(h.budget||0):subs.reduce((a,x)=>a+(x[2]||0),0);
+    const live=budgetsOn(mk(cur));
+    const base=live?(cat?(h.budget||0):subs.reduce((a,x)=>a+(x[2]||0),0)):0;
     const cf=base?(carry[h.name]||0):0;
+    if(!live)subs.forEach(x=>{if(x[2]!==null)x[2]=0;});
     groups.push({name:h.name,sp:cs,bd:base+cf,base,cf,subs,cat});
     spent+=cs;budget+=base+cf;carryTotal+=cf;});
   const orph=orphanSubs();
@@ -1068,6 +1076,7 @@ function render(){
       <div class="v" style="color:${col}">${inr(spent)}</div>
       ${view!=="all"?`<div style="font-size:10px;margin-top:3px;color:var(--muted)">${inr(allSpent)} all</div>`:""}</div>
     <div class="stat"><div class="k">Budget${view!=="all"?" &middot; "+view:""}</div><div class="v">${inr(budget)}</div>
+      ${!budgetsOn(mk(cur))?`<div style="font-size:10px;margin-top:3px;color:var(--muted)">before budget start</div>`:""}
       ${view!=="all"?`<div style="font-size:10px;margin-top:3px;color:var(--muted)">${inr(allBudget)} all</div>`:""}</div>
     <div class="stat"><div class="k">${spent>budget?"Over by":"Left"}</div>
       <div class="v" style="color:${spent>budget?"var(--red)":"var(--teal)"}">${inr(Math.abs(budget-spent))}</div></div>
@@ -1456,9 +1465,19 @@ function budgetPanel(sp){
   S.tree.forEach(h=>{
     if(h.mode==="cat"){ ((h.type||"V")==="F"?fSum+=+h.budget||0:vSum+=+h.budget||0); }
     else h.subs.forEach(x=>{ (x.type==="F"?fSum+=+x.budget||0:vSum+=+x.budget||0); });});
-  return `<label class="tog" style="margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid var(--line)">
-      <input type="checkbox" ${S.carry?"checked":""} onchange="setCarry(this.checked)">
-      Carry unspent budget into the next month</label>`
+  return `<div style="margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid var(--line)">
+      <label class="tog" style="padding:0 0 8px">
+        <input type="checkbox" ${S.carry?"checked":""} onchange="setCarry(this.checked)">
+        Carry unspent budget into the next month</label>
+      <label>Budgets apply from</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="month" value="${S.budgetStart}" onchange="setBudgetStart(this.value)" style="flex:1">
+        ${S.budgetStart?`<button class="btn ghost sm" onclick="setBudgetStart('')">Clear</button>`:""}
+      </div>
+      <div class="sub" style="margin-top:5px">Months before this show a zero budget and add nothing to the
+        carry-over. Set it to the month you started recording properly, so a half-logged first month
+        doesn't inflate the next one.</div>
+    </div>`
     +body+`<div class="bedit" style="border-top:2px solid var(--line);margin-top:10px;padding-top:10px">
       <span style="font-weight:700;color:var(--ink)">Total monthly budget</span>
       <span class="num" style="font-weight:700">${inr(tot)}</span></div>

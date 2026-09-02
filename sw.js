@@ -1,4 +1,4 @@
-const CACHE = "apps-v1";
+const CACHE = "apps-v2";
 const SHELL = ["index.html","vault.html","tracker.webmanifest","vault.webmanifest",
   "icon-tracker-192.png","icon-tracker-512.png","icon-tracker-maskable.png",
   "icon-vault-192.png","icon-vault-512.png","icon-vault-maskable.png"];
