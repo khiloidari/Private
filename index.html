@@ -923,12 +923,21 @@ function line(vals,labels,color){
     out+=`<text x="${x.toFixed(1)}" y="${H+11}" font-size="8" fill="#6B7789" text-anchor="middle" font-family="IBM Plex Mono">${l}</text>`;});
   return out+"</svg>";}
 
+function analyticsMonths(){
+  // from the budget start month (or first entry) up to the month being viewed, at most 12
+  const first=firstActiveMonth(); if(!first)return [];
+  const start=S.budgetStart&&S.budgetStart>first?S.budgetStart:first;
+  const all=monthKeys(12).filter(x=>x[0]>=start);
+  return all.length?all:monthKeys(1);
+}
 function analytics(){
-  const ms=monthKeys(12), keys=ms.map(x=>x[0]), labs=ms.map(x=>x[1]);
+  const ms=analyticsMonths(), keys=ms.map(x=>x[0]), labs=ms.map(x=>x[1]);
   const exp=keys.map(expIn), income=keys.map(incIn), nw=keys.map(nwAt);
-  const live=exp.filter(v=>v>0);
+  const active=keys.filter(kk=>S.txs.some(t=>txMonth(t)===kk));   // months with any entry
+  const live=keys.filter(kk=>active.includes(kk)).map(expIn).filter(v=>v>0);
   const med=medianOf(live), avg=live.length?live.reduce((a,b)=>a+b,0)/live.length:0;
-  const k=mk(cur), thisM=expIn(k), prevM=expIn(keys[10]||"");
+  const k=mk(cur), thisM=expIn(k);
+  const prevKey=keys[keys.indexOf(k)-1]||""; const prevM=prevKey?expIn(prevKey):0;
   const mom=prevM?((thisM-prevM)/prevM)*100:0;
   const now=new Date(),same=mk(now)===k;
   const dim=new Date(cur.getFullYear(),cur.getMonth()+1,0).getDate();
@@ -959,7 +968,7 @@ function analytics(){
 
   return `
   <div class="card">
-    <h2>Income vs spending &middot; 12 months</h2>
+    <h2>Income vs spending &middot; ${keys.length} month${keys.length>1?"s":""}${S.budgetStart?" from "+cycLabel(S.budgetStart)+" "+S.budgetStart.slice(0,4):""}</h2>
     ${bars([{v:income,c:"var(--teal)"},{v:exp,c:"var(--red)"}],labs,inr)}
     <div style="display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:8px">
       <span><span style="display:inline-block;width:8px;height:8px;background:var(--teal);border-radius:2px"></span> Income</span>
@@ -984,8 +993,8 @@ function analytics(){
   <div class="card">
     <h2>Net worth trend</h2>
     ${line(nw,labs,"#4C4A8F")}
-    <div class="sub" style="margin-top:8px">Change over 12 months:
-      <span class="num" style="color:${nw[11]-nw[0]>=0?"var(--teal)":"var(--red)"}">${inr(nw[11]-nw[0])}</span>
+    <div class="sub" style="margin-top:8px">Change over ${keys.length} month${keys.length>1?"s":""}:
+      <span class="num" style="color:${nw[nw.length-1]-nw[0]>=0?"var(--teal)":"var(--red)"}">${inr(nw[nw.length-1]-nw[0])}</span>
       &middot; needs opening balances to mean anything.</div>
   </div>
 
@@ -1016,7 +1025,7 @@ function analytics(){
   </div>
 
   <div class="card">
-    <h2>Biggest lines &middot; 12 months</h2>
+    <h2>Biggest lines &middot; ${keys.length} month${keys.length>1?"s":""}</h2>
     ${tops.length?tops.map(([n,v])=>`
       <div style="margin-bottom:9px">
         <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
@@ -1024,7 +1033,105 @@ function analytics(){
         <div class="track" style="margin-top:0;height:6px">
           <div class="fill" style="width:${(v/topMax*100).toFixed(1)}%;background:var(--teal)"></div></div>
       </div>`).join(""):'<div class="empty">Nothing recorded yet.</div>'}
-  </div>`;
+  </div>
+  ${extraAnalytics(k,keys,labs,exp,income)}`;
+}
+
+function extraAnalytics(k,keys,labs,exp,income){
+  const monthE=S.txs.filter(t=>t.type==="expense"&&txMonth(t)===k);
+  const out=[];
+
+  // --- savings rate trend ---
+  const rates=keys.map((kk,i)=>income[i]?((income[i]-exp[i])/income[i])*100:null);
+  if(rates.some(r=>r!==null)){
+    const vals=rates.map(r=>r===null?0:r);
+    out.push(`<div class="card"><h2>Savings rate</h2>${line(vals,labs,"#0F7A6B")}
+      <div class="sub" style="margin-top:8px">Share of each month's income not spent. Months with no income recorded show as zero.</div></div>`);
+  }
+
+  // --- budget adherence this month ---
+  const sp={}; monthE.forEach(t=>{sp[t.sub]=(sp[t.sub]||0)+netAmt(t);});
+  const rows=[];
+  if(budgetsOn(k))S.tree.forEach(h=>{
+    if(h.mode==="cat"){const b=+h.budget||0; if(!b)return;
+      const a=h.subs.reduce((x,y)=>x+(sp[y.name]||0),0); rows.push([h.name,a,b]);}
+    else h.subs.forEach(x=>{const b=+x.budget||0; if(!b)return; rows.push([x.name,sp[x.name]||0,b]);});
+  });
+  const over=rows.filter(r=>r[1]>r[2]).sort((a,b)=>(b[1]-b[2])-(a[1]-a[2]));
+  const under=rows.filter(r=>r[1]<=r[2]);
+  if(rows.length)out.push(`<div class="card"><h2>Budget check &middot; this month</h2>
+    <div class="runway" style="margin-bottom:10px">
+      <div class="stat"><div class="k">Within budget</div><div class="v" style="color:var(--teal)">${under.length}</div></div>
+      <div class="stat"><div class="k">Over budget</div><div class="v" style="color:${over.length?"var(--red)":"var(--muted)"}">${over.length}</div></div>
+      <div class="stat"><div class="k">Overspend total</div><div class="v" style="color:var(--red)">${inr(over.reduce((a,r)=>a+r[1]-r[2],0))}</div></div>
+    </div>
+    ${over.length?over.slice(0,8).map(([n,a,b])=>`<div class="bedit"><span>${esc(n)}</span>
+      <span class="num" style="color:var(--red)">+${inr(a-b)} <span style="color:var(--muted)">(${inr(a)} of ${inr(b)})</span></span></div>`).join("")
+      :'<div class="sub">Every budgeted line is within its limit so far.</div>'}
+  </div>`);
+
+  // --- where the money came from: cards vs bank vs cash ---
+  const src={};
+  monthE.forEach(t=>{const g=groupOf(t.from);const key=g?g.name:"No account";src[key]=(src[key]||0)+netAmt(t);});
+  const srcRows=Object.entries(src).sort((a,b)=>b[1]-a[1]);
+  const srcTot=srcRows.reduce((a,r)=>a+r[1],0)||1;
+  if(srcRows.length)out.push(`<div class="card"><h2>Paid from &middot; this month</h2>
+    <div class="track" style="height:18px;margin-top:0;display:flex">
+      ${srcRows.map((r,i)=>`<div style="width:${(r[1]/srcTot*100).toFixed(1)}%;background:${["var(--ink)","var(--teal)","var(--violet)","var(--amber)","#6B7789"][i%5]}" title="${esc(r[0])}"></div>`).join("")}
+    </div>
+    ${srcRows.map((r,i)=>`<div class="bedit"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;
+      background:${["var(--ink)","var(--teal)","var(--violet)","var(--amber)","#6B7789"][i%5]}"></span>${esc(r[0])}</span>
+      <span class="num">${inr(r[1])} <span style="color:var(--muted)">${(r[1]/srcTot*100).toFixed(0)}%</span></span></div>`).join("")}
+    <div class="sub" style="margin-top:8px">Card spending is credit until the bill is paid — a high card share means a bigger statement coming.</div>
+  </div>`);
+
+  // --- rhythm: spending by day of the week ---
+  const dow=[0,0,0,0,0,0,0], dowN=[0,0,0,0,0,0,0];
+  S.txs.filter(t=>t.type==="expense"&&keys.includes(txMonth(t))).forEach(t=>{
+    const d=new Date(t.date).getDay(); dow[d]+=netAmt(t); dowN[d]++;});
+  if(dowN.some(n=>n)){
+    const order=[1,2,3,4,5,6,0], lbl=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+    out.push(`<div class="card"><h2>Day of the week</h2>
+      ${bars([{v:order.map(i=>dow[i]),c:"var(--violet)"}],lbl,inr)}
+      <div class="sub" style="margin-top:8px">Total across ${keys.length} month${keys.length>1?"s":""}. Weekend spikes usually mean eating out and outings; a weekday spike is often one large bill.</div></div>`);
+  }
+
+  // --- biggest single entries this month ---
+  const big=monthE.slice().sort((a,b)=>netAmt(b)-netAmt(a)).slice(0,6);
+  if(big.length)out.push(`<div class="card"><h2>Largest entries &middot; this month</h2>
+    ${big.map(t=>`<div class="bedit"><span>${esc(t.sub)}${t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':""}
+      <span style="color:var(--muted)"> &middot; ${t.date.slice(8)}/${t.date.slice(5,7)}</span></span>
+      <span class="num" style="font-weight:600">${inr(netAmt(t))}</span></div>`).join("")}
+    <div class="sub" style="margin-top:8px">Top ${big.length} make up ${inr(big.reduce((a,t)=>a+netAmt(t),0))} of ${inr(monthE.reduce((a,t)=>a+netAmt(t),0))}.</div>
+  </div>`);
+
+  // --- income by category this month ---
+  const inc={}; S.txs.filter(t=>t.type==="income"&&txMonth(t)===k&&!isCardAcct(t.to))
+    .forEach(t=>{const n=t.sub||"Uncategorised";inc[n]=(inc[n]||0)+t.amount;});
+  const incRows=Object.entries(inc).sort((a,b)=>b[1]-a[1]);
+  if(incRows.length)out.push(`<div class="card"><h2>Income by source &middot; this month</h2>
+    ${incRows.map(([n,v])=>`<div class="bedit"><span>${esc(n)}</span><span class="num" style="color:var(--teal)">${inr(v)}</span></div>`).join("")}
+  </div>`);
+
+  // --- what next month already owes: fixed budgets + EMI schedules ---
+  const nk=addCycle(k,1);
+  let fixedB=0; S.tree.forEach(h=>{
+    if(h.mode==="cat"){if((h.type||"V")==="F")fixedB+=+h.budget||0;}
+    else h.subs.forEach(x=>{if(x.type==="F")fixedB+=+x.budget||0;});});
+  let emiDue=0; allEmis().forEach(({a,e})=>{
+    const st=emiStats(e,a.stmtDay);
+    st.detail.forEach(d=>{ if(!d.paid&&d.pc===nk)emiDue+=d.P+d.I; if(!d.gpaid&&d.gc===nk)emiDue+=d.G; });});
+  const recur=(S.rules||[]).filter(r=>!r.paused&&r.type==="expense").reduce((a,r)=>a+(+r.amount||0),0);
+  if(fixedB||emiDue||recur)out.push(`<div class="card"><h2>Already committed &middot; ${cycLabel(nk)}</h2>
+    <div class="bedit"><span>Fixed budgets</span><span class="num">${inr(fixedB)}</span></div>
+    <div class="bedit"><span>Card EMI instalments due</span><span class="num">${inr(emiDue)}</span></div>
+    <div class="bedit"><span>Recurring rules (may overlap fixed)</span><span class="num" style="color:var(--muted)">${inr(recur)}</span></div>
+    <div class="bedit" style="border-top:1px solid var(--line);margin-top:5px;padding-top:6px">
+      <span style="font-weight:600;color:var(--ink)">Spoken for before the month starts</span>
+      <span class="num" style="font-weight:600">${inr(fixedB+emiDue)}</span></div>
+  </div>`);
+
+  return out.join("");
 }
 
 /* ---------- render ---------- */
