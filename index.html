@@ -1384,8 +1384,10 @@ function render(){
           <button class="tab ${txType==="refund"?"on":""}" onclick="setTx('refund')">Reimbursed</button>
         </div>
         <div class="f2">
-          <div><label>Amount</label><input id="a" type="number" inputmode="decimal" placeholder="0"
-            value="${editTx?editTx.amount:""}"></div>
+          <div><label>Amount <span style="text-transform:none;letter-spacing:0;font-weight:400">&middot; sums allowed, e.g. 120+45*2</span></label>
+            <input id="a" type="text" inputmode="decimal" placeholder="0" autocomplete="off"
+              value="${editTx?editTx.amount:""}" oninput="calcHint(this.value)">
+            <div id="calc" class="sub" style="margin-top:4px;min-height:14px"></div></div>
           <div><label>Date &amp; time</label>
             <div style="display:flex;gap:6px">
               <input id="dt" type="date" value="${editTx?editTx.date:todayISO()}" style="flex:1">
@@ -1702,10 +1704,25 @@ function cardsPanel(){
         ${st.shared?`<div style="font-size:10px;color:var(--muted);margin-top:4px">
           this card ${inr(st.blocked)} &middot; other cards on ${esc(st.poolName)} ${inr(st.poolBlocked-st.blocked)}
           &middot; group total ${inr(st.poolBlocked)} of ${inr(st.lim)}</div>`:""}`:""}
-        <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);margin-top:6px;flex-wrap:wrap">
-          <span>${st.lim?`${((st.util||0)*100).toFixed(0)}% blocked &middot; ${inr(st.avail)} free${st.shared?" (shared)":""}`:"no limit set"}</span>
-          <span>${a.stmtDay?`unbilled <span class="num" style="color:${st.cycle<0?"var(--teal)":"inherit"}">${inr(st.cycle)}</span>${st.cycleCredit?` <span style="color:var(--teal)">(after ${inr(st.cycleCredit)} credited)</span>`:""} &middot; next bill ${fdate(st.nextStmt)}`:"no bill day set"}</span>
-        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">
+          ${st.lim?`${((st.util||0)*100).toFixed(0)}% blocked &middot; ${inr(st.avail)} free${st.shared?" (shared)":""}`:"no limit set"}</div>
+        ${a.stmtDay?`
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-top:5px;flex-wrap:wrap">
+          <span style="color:var(--muted)">unbilled
+            <span class="num" style="color:${st.cycle<0?"var(--teal)":"var(--ink)"};font-weight:600">${inr(st.cycle)}</span>
+            ${st.cycleCredit?`<span style="color:var(--teal)">(after ${inr(st.cycleCredit)} credited)</span>`:""}</span>
+          <span style="color:var(--muted)">bills <b style="color:var(--ink)">${fdate(st.nextStmt)}</b>
+            ${st.dueForNext?`&rarr; due <b style="color:var(--ink)">${fdate(st.dueForNext)}</b>`:""}</span>
+        </div>`:""}
+        ${st.stmtDue>0&&st.dueDate?`
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-top:4px;flex-wrap:wrap">
+          <span style="color:var(--muted)">billed ${fdate(st.lastStmt)}
+            <span class="num" style="color:var(--ink);font-weight:600">${inr(st.stmtDue)}</span></span>
+          <span style="color:${st.overdue?"var(--red)":dc};font-weight:600">
+            ${st.overdue?`OVERDUE since ${fdate(st.dueDate)} &middot; ${Math.abs(st.daysToDue)}d`
+              :`pay by ${fdate(st.dueDate)} &middot; ${st.daysToDue}d`}</span>
+        </div>`:(a.stmtDay&&st.lastStmt?`<div style="font-size:11px;color:var(--muted);margin-top:4px">
+          ${fdate(st.lastStmt)} statement settled &middot; nothing due ${st.dueDate?fdate(st.dueDate):""}</div>`:"")}
         ${st.emiNext>0?`<div style="font-size:11px;color:var(--muted);margin-top:4px">
           next bill about <span class="num" style="color:var(--ink);font-weight:600">${inr(st.nextBill)}</span>
           &mdash; ${inr(st.cycle)} spending + EMI ${inr(st.emiNext)}
@@ -1714,20 +1731,13 @@ function cardsPanel(){
           EMI holding <span class="num" style="color:var(--violet)">${inr(st.emiBlock)}</span>
           (principal ${inr(st.emiP)} + interest ${inr(st.emiI)})
           &middot; GST not blocked</div>`:""}
-        ${st.dueDate?`<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-top:4px;flex-wrap:wrap">
-          <span style="color:var(--muted)">${st.lastStmt?`billed ${fdate(st.lastStmt)}`:"due"}
-            ${st.stmtDue?`<span class="num" style="color:var(--ink);font-weight:600"> ${inr(st.stmtDue)}</span>`:""}</span>
-          <span style="color:${st.overdue?"var(--red)":dc};font-weight:600">
-            ${st.overdue?`OVERDUE since ${fdate(st.dueDate)} &middot; ${Math.abs(st.daysToDue)}d`
-              :`pay by ${fdate(st.dueDate)} &middot; ${st.daysToDue}d`}</span>
-        </div>`:""}
       </div>`;}).join("")}
     ${emiPanel()}
     <div class="sub" style="margin-top:10px">Set each card's limit, bill day and due day under Accounts &rarr; Edit.
       Spend on a card by choosing it as "Paid from"; pay the bill as a Transfer from your bank to the card.
-      The due date follows the statement, so a card billing on the 23rd and due on the 13th is due the
-      <b>following</b> month. "Unbilled" is spending since the last statement — it lands on the next bill,
-      not this one. Card spending is counted in the month its statement closes: buy on the 25th with a 23rd
+      The cycle runs <b>unbilled &rarr; billed &rarr; due</b>: what you spend after the 23rd is unbilled, becomes
+      the statement on the next 23rd, and is due on the 13th after that. The billed line only appears while a
+      statement is actually outstanding. Card spending is counted in the month its statement closes: buy on the 25th with a 23rd
       bill date and it falls into next month's expenses. Cash and bank spending always uses the calendar month.</div>
   </div>`;
 }
@@ -1944,8 +1954,25 @@ function tog(c){open[c]=!open[c];render();}
 function gtog(c){gopen[c]=!gopen[c];render();}
 function setInc(v){S.income=+v||0;save();render();}
 function val(id){const e=document.getElementById(id);return e?e.value:"";}
+// evaluate + - * / ( ) and decimals only; anything else is rejected
+function calcAmt(str){
+  const t=String(str||"").replace(/[₹,\s]/g,"");
+  if(!t)return NaN;
+  if(!/^[0-9.+\-*/()]+$/.test(t))return NaN;
+  if(/[+\-*/]{2,}/.test(t.replace(/\(-/g,"("))&&!/\*\*/.test(t))return NaN;
+  try{const v=Function('"use strict";return ('+t+')')();return typeof v==="number"&&isFinite(v)?Math.round(v*100)/100:NaN;}
+  catch(e){return NaN;}
+}
+function calcHint(v){
+  const el=document.getElementById("calc"); if(!el)return;
+  const s=String(v||"").trim();
+  if(!s||/^[0-9.]+$/.test(s)){el.textContent="";return;}
+  const r=calcAmt(s);
+  el.innerHTML=isNaN(r)?'<span style="color:var(--red)">not a valid sum</span>':'= <b>'+inr(r)+'</b>';
+}
 function add(){
-  const a=+val("a");
+  const a=calcAmt(val("a"));
+  if(isNaN(a))return toast("That amount isn't a valid sum");
   if(!a||a<=0)return toast("Enter an amount first");
   const date=val("dt"), note=val("nt").trim();
   const t={id:Date.now()+"-"+Math.random().toString(36).slice(2,7),date,
