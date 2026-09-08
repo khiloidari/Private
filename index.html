@@ -1387,6 +1387,13 @@ function render(){
           <div><label>Amount <span style="text-transform:none;letter-spacing:0;font-weight:400">&middot; sums allowed, e.g. 120+45*2</span></label>
             <input id="a" type="text" inputmode="decimal" placeholder="0" autocomplete="off"
               value="${editTx?editTx.amount:""}" oninput="calcHint(this.value)">
+            <div style="display:flex;gap:4px;margin-top:6px">
+              ${[["+","+"],["−","-"],["×","*"],["÷","/"],["(","("],[")",")"]].map(([l,c])=>
+                `<button type="button" class="ic" style="flex:1;padding:7px 0;font-family:var(--mono);font-size:14px"
+                  onclick="insertOp('${c}')">${l}</button>`).join("")}
+              <button type="button" class="ic" style="flex:1;padding:7px 0" onclick="insertOp('BS')" title="Backspace">&#9003;</button>
+              <button type="button" class="ic" style="flex:1;padding:7px 0" onclick="insertOp('CLR')" title="Clear">C</button>
+            </div>
             <div id="calc" class="sub" style="margin-top:4px;min-height:14px"></div></div>
           <div><label>Date &amp; time</label>
             <div style="display:flex;gap:6px">
@@ -1962,6 +1969,20 @@ function calcAmt(str){
   if(/[+\-*/]{2,}/.test(t.replace(/\(-/g,"("))&&!/\*\*/.test(t))return NaN;
   try{const v=Function('"use strict";return ('+t+')')();return typeof v==="number"&&isFinite(v)?Math.round(v*100)/100:NaN;}
   catch(e){return NaN;}
+}
+function insertOp(ch){
+  const el=document.getElementById("a"); if(!el)return;
+  const v=el.value||"", st=el.selectionStart??v.length, en=el.selectionEnd??v.length;
+  let nv, pos;
+  if(ch==="CLR"){nv="";pos=0;}
+  else if(ch==="BS"){
+    if(st!==en){nv=v.slice(0,st)+v.slice(en);pos=st;}
+    else if(st>0){nv=v.slice(0,st-1)+v.slice(st);pos=st-1;}
+    else{nv=v;pos=st;}
+  } else {nv=v.slice(0,st)+ch+v.slice(en);pos=st+ch.length;}
+  el.value=nv;
+  try{el.focus({preventScroll:true});el.setSelectionRange(pos,pos);}catch(e){}
+  calcHint(nv);
 }
 function calcHint(v){
   const el=document.getElementById("calc"); if(!el)return;
