@@ -1,4 +1,4 @@
-const CACHE = "vault-v2";
+const CACHE = "vault-v3";
 const SHELL = ["index.html","manifest.webmanifest",
   "icon-vault-192.png","icon-vault-512.png","icon-vault-maskable.png"];
 self.addEventListener("install", e => {

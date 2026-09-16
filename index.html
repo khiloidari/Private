@@ -216,7 +216,7 @@ const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:""};
 let cur=new Date(), view="variable", pane="cats", txType="expense", mainTab="overview";
 let catTab="expense"; const TR=()=>catTab==="income"?S.itree:S.tree;
-let acctFilter=""; let fixing=null; let refFor=null; let mobTab="home"; let editTx=null, txq="", showAllTx=false, restoreArm=null, pendingRestore=null; let open={}, gopen={}, sopen={}, showAll=false, edit=false, gedit=false, arm=null, ready=false;
+let acctFilter=""; let catFilter=null; let fixing=null; let refFor=null; let mobTab="home"; let editTx=null, txq="", showAllTx=false, restoreArm=null, pendingRestore=null; let open={}, gopen={}, sopen={}, showAll=false, edit=false, gedit=false, arm=null, ready=false;
 
 const inr=n=>{
   const v=Math.round(Math.abs(+n||0)*100)/100;
@@ -1287,9 +1287,13 @@ function render(){
             <div class="amt">${inr(g.sp)} <span style="color:var(--muted)">/ ${inr(g.bd)}</span>
               ${g.cf?`<div style="font-size:10px;color:${g.cf<0?"var(--red)":"var(--teal)"}">
                 ${inr(g.base)} ${g.cf<0?"&minus;":"+"} ${inr(Math.abs(g.cf))}</div>`:""}</div>
+            ${g.name!==UNASSIGNED?`<button class="ic" style="padding:4px 8px;flex-shrink:0" title="Show this month's entries"
+              onclick="event.stopPropagation();showCat('head','${q(esc(g.name))}')">&rsaquo;</button>`:""}
           </div>${open[g.name]?(rows.length?rows.map(x=>
-            `<div class="subrow ${x[1]===0&&!x[2]?"zero":""}"><span>${esc(x[0])}</span>
-              <span class="num">${inr(x[1])} / ${x[2]===null?"&mdash;":inr(x[2])}</span></div>`).join("")
+            `<div class="subrow ${x[1]===0&&!x[2]?"zero":""}" style="cursor:pointer"
+               onclick="event.stopPropagation();showCat('sub','${q(esc(x[0]))}')" title="Show this month's entries">
+              <span>${esc(x[0])}</span>
+              <span class="num">${inr(x[1])} / ${x[2]===null?"&mdash;":inr(x[2])} <span style="color:var(--muted);font-size:10px">&rsaquo;</span></span></div>`).join("")
             :'<div class="subrow zero">Nothing here yet</div>'):""}</div>`;}).join("")
           :'<div class="empty">No categories yet.</div>'}
       </div>
@@ -1342,6 +1346,10 @@ function render(){
             <h2 style="margin:0">This month &middot; ${hit.length}${hit.length!==all.length?" of "+all.length:""} entries</h2>
             ${carryTx().length?`<span style="font-size:11px;color:var(--muted)">+${carryTx().length} carried</span>`:""}
           </div>
+          ${catFilter?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span class="pill" style="background:#E3F1EE;color:var(--teal);font-size:11px;padding:5px 9px">${esc(catFilter.name)}</span>
+            <span class="sub" style="flex:1">${catFilter.kind==="sub"?"this subcategory":"whole category"}</span>
+            <button class="ic" onclick="clearCat()">Show all</button></div>`:""}
           ${acctFilter?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span class="pill" style="background:#E8E7F2;color:var(--violet);font-size:11px;padding:5px 9px">${esc(acctFilter)}</span>
             <span class="sub" style="flex:1">only entries on this account</span>
@@ -1349,7 +1357,7 @@ function render(){
           <input type="text" placeholder="Filter by category, note or account" value="${esc(txq)}"
             oninput="setQ(this.value)" style="margin-bottom:9px">
           ${hit.length?`<div class="bedit" style="margin-bottom:6px;padding-bottom:7px;border-bottom:1px solid var(--line)">
-            <span>${acctFilter?esc(acctFilter):txq?"Matching":"Month"} total</span>
+            <span>${catFilter?esc(catFilter.name):acctFilter?esc(acctFilter):txq?"Matching":"Month"} total</span>
             <span class="num" style="font-size:12px">
               <span style="color:var(--teal)">+${inr(inSum)}</span> &nbsp;
               <span style="color:var(--red)">&minus;${inr(outSum)}</span></span></div>`:""}`;})()}
@@ -2133,12 +2141,17 @@ function setQ(v){txq=v;showAllTx=false;
   const inp=el&&el.querySelector('input[placeholder^="Filter by"]');
   if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}}
 function toggleAllTx(){showAllTx=!showAllTx;render();}
-function showAcct(n){acctFilter=n;txq="";showAllTx=false;
+function showCat(kind,n){catFilter={kind,name:n};acctFilter="";txq="";showAllTx=false;
+  if(typeof setMob==="function"&&window.innerWidth<900)setMob("entries"); else render();
+  toast("Showing "+n+" for "+mname(cur));}
+function clearCat(){catFilter=null;render();}
+function showAcct(n){acctFilter=n;catFilter=null;txq="";showAllTx=false;
   if(typeof setMob==="function"&&window.innerWidth<900)setMob("entries"); else render();
   toast("Showing "+n+" for "+mname(cur));}
 function clearAcct(){acctFilter="";render();}
 function filterTx(list){
   if(acctFilter)list=list.filter(t=>t.from===acctFilter||t.to===acctFilter);
+  if(catFilter)list=list.filter(t=>catFilter.kind==="sub"?t.sub===catFilter.name:catOf(t.sub)===catFilter.name);
   const s=txq.trim().toLowerCase(); if(!s)return list;
   return list.filter(t=>[t.sub,t.note,t.from,t.to,catOf(t.sub)]
     .filter(Boolean).some(v=>String(v).toLowerCase().includes(s)));}
@@ -2157,10 +2170,7 @@ setInterval(()=>{if(ready&&!editTx&&!formBusy())render();},60000);   // clock ti
 load();
 </script>
 
-
-<div id="buildstamp" style="position:fixed;left:8px;bottom:calc(84px + env(safe-area-inset-bottom));
-  font:10px 'IBM Plex Mono',monospace;color:#6B7789;opacity:.75;z-index:60;pointer-events:none">
-  build 2026-09-16 tracker</div>
+<div id="buildstamp" style="text-align:center;padding:14px 0 calc(90px + env(safe-area-inset-bottom));font:10px 'IBM Plex Mono',monospace;color:#6B7789">build 2026-09-16 tracker</div>
 <script>
 (function(){
   if(!("serviceWorker" in navigator))return;
