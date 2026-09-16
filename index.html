@@ -2157,10 +2157,28 @@ setInterval(()=>{if(ready&&!editTx&&!formBusy())render();},60000);   // clock ti
 load();
 </script>
 
+
+<div id="buildstamp" style="position:fixed;left:8px;bottom:calc(84px + env(safe-area-inset-bottom));
+  font:10px 'IBM Plex Mono',monospace;color:#6B7789;opacity:.75;z-index:60;pointer-events:none">
+  build 2026-09-16 tracker</div>
 <script>
-if("serviceWorker" in navigator){
-  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
-}
+(function(){
+  if(!("serviceWorker" in navigator))return;
+  var reloading=false;
+  // when a new worker takes control, reload once so the new files are what you see
+  navigator.serviceWorker.addEventListener("controllerchange",function(){
+    if(reloading)return; reloading=true; location.reload();
+  });
+  window.addEventListener("load",function(){
+    navigator.serviceWorker.register("sw.js").then(function(reg){
+      reg.update().catch(function(){});
+      // check again whenever the app comes back to the foreground
+      document.addEventListener("visibilitychange",function(){
+        if(document.visibilityState==="visible")reg.update().catch(function(){});
+      });
+    }).catch(function(){});
+  });
+})();
 </script>
 </body>
 </html>
