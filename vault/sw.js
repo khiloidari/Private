@@ -1,6 +1,6 @@
-const CACHE = "expenses-v8";
+const CACHE = "vault-v1";
 const SHELL = ["index.html","manifest.webmanifest",
-  "icon-tracker-192.png","icon-tracker-512.png","icon-tracker-maskable.png"];
+  "icon-vault-192.png","icon-vault-512.png","icon-vault-maskable.png"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
@@ -11,11 +11,9 @@ self.addEventListener("activate", e => {
 });
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
-  const url = new URL(e.request.url);
-  if (url.pathname.includes("/vault/")) return;          // the vault has its own worker
   e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit =>
     hit || fetch(e.request).then(res => {
-      if (res.ok && url.origin === location.origin) {
+      if (res.ok && new URL(e.request.url).origin === location.origin) {
         const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy));
       }
       return res;

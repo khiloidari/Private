@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Expenses">
-<link rel="manifest" href="tracker.webmanifest">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-tracker-192.png">
 <link rel="apple-touch-icon" href="icon-tracker-192.png">
 <style>
@@ -32,10 +32,6 @@
 </style>
 </head>
 <body>
-<div class="nav">
-  <a href="index.html" class="on">Expenses</a>
-  <a href="vault.html" class="">Vault</a>
-</div>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -137,6 +133,39 @@
     #et[data-mob="more"] [data-sec]:not([data-sec="more"]){display:none !important}
     #et:not([data-mob="home"]) .bar h1{display:none}
     #et:not([data-mob="home"]) .bar{margin-bottom:8px}
+    /* bigger, calmer touch targets */
+    .card{padding:13px 13px;margin-bottom:11px;border-radius:11px}
+    .runway{gap:8px;margin-bottom:10px;grid-template-columns:repeat(3,1fr) !important}
+    .stat{padding:10px 10px}
+    .stat .v{font-size:16px}
+    .stat .k{font-size:9px}
+    .row{padding:11px 0}
+    .row .nm{font-size:14px}
+    .subrow{padding:8px 0 8px 18px;font-size:13px}
+    .tx{padding:10px 0;gap:8px}
+    .tx .t{font-size:13px}
+    .tx .d{width:40px;font-size:10px}
+    .ic{padding:8px 10px;font-size:12px;min-height:34px}
+    .x{font-size:20px !important;padding:0 6px !important}
+    .btn{padding:13px;font-size:15px}
+    .tabs{gap:4px}
+    .tab{padding:8px 10px;font-size:12px}
+    input,select,textarea{padding:11px 11px;border-radius:9px}
+    label{margin-bottom:6px}
+    .f2{grid-template-columns:1fr 1fr;gap:8px}
+    .bedit{padding:7px 0;font-size:13px}
+    .bedit input[type=number]{width:96px;padding:8px 8px}
+    /* the record form takes the whole screen on the Add tab — no distractions */
+    #et[data-mob="add"] .card[data-sec="add"]{border:none;box-shadow:none;background:transparent;padding:4px 0}
+    #et[data-mob="add"] .card[data-sec="add"] h2{font-size:15px}
+    /* month strip sits tight under the nav so you don't scroll to find it */
+    .mo{width:100%;justify-content:space-between;margin-top:6px}
+    .mo span{flex:1;font-size:14px}
+    .mo button{padding:8px 16px;font-size:20px}
+    /* entries list: amount is the thing you scan — make it clear */
+    .tx .num{font-size:14px}
+    /* sticky month header on the entries tab */
+    #et[data-mob="entries"] .bar{position:sticky;top:0;z-index:5;background:var(--paper);padding:6px 0;margin:-6px 0 8px}
   }
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -187,7 +216,7 @@ const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:""};
 let cur=new Date(), view="variable", pane="cats", txType="expense", mainTab="overview";
 let catTab="expense"; const TR=()=>catTab==="income"?S.itree:S.tree;
-let fixing=null; let refFor=null; let mobTab="home"; let editTx=null, txq="", showAllTx=false, restoreArm=null, pendingRestore=null; let open={}, gopen={}, sopen={}, showAll=false, edit=false, gedit=false, arm=null, ready=false;
+let acctFilter=""; let fixing=null; let refFor=null; let mobTab="home"; let editTx=null, txq="", showAllTx=false, restoreArm=null, pendingRestore=null; let open={}, gopen={}, sopen={}, showAll=false, edit=false, gedit=false, arm=null, ready=false;
 
 const inr=n=>{
   const v=Math.round(Math.abs(+n||0)*100)/100;
@@ -1176,6 +1205,7 @@ function render(){
     if(g.kind==="liability")liab+=-b; else assets+=b;}));
 
   const root=document.getElementById("et"); root.setAttribute("data-mob",mobTab);
+  captureDraft();
   root.innerHTML=`
   <div class="mobnav">
     ${[["home","Home"],["entries","Entries"],["add","+ Add"],["cards","Cards"],["more","More"]].map(([k,l])=>
@@ -1293,8 +1323,10 @@ function render(){
               ${inr(shown)}${g.kind==="liability"?' <span style="color:var(--muted);font-size:11px">due</span>':""}</div>
           </div>${gopen[g.name]?(g.accts.length?g.accts.map(x=>{
             const b=balance(x.name),v=g.kind==="liability"?-b:b;
-            return `<div class="subrow"><span>${esc(x.name)}</span>
-              <span class="num" style="color:${v<0?"var(--red)":"inherit"}">${inr(v)}</span></div>`;}).join("")
+            const n=S.txs.filter(t=>txMonth(t)===mk(cur)&&(t.from===x.name||t.to===x.name)).length;
+            return `<div class="subrow" style="cursor:pointer" onclick="showAcct('${q(esc(x.name))}')" title="Show this month's entries">
+              <span>${esc(x.name)}${n?` <span style="font-size:10px;color:var(--muted)">&middot; ${n} this month</span>`:""}</span>
+              <span class="num" style="color:${v<0?"var(--red)":"inherit"}">${inr(v)} <span style="color:var(--muted);font-size:10px">&rsaquo;</span></span></div>`;}).join("")
             :'<div class="subrow zero">No accounts in this group</div>'):""}</div>`;}).join("")}
         <div class="row" style="border-top:2px solid var(--line);border-bottom:none;cursor:default;margin-top:6px">
           <div class="nm">Net worth</div>
@@ -1304,16 +1336,20 @@ function render(){
       <div class="card" data-sec="entries">
         ${(()=>{
           const all=monthTx(), hit=filterTx(all);
-          const inSum=hit.filter(t=>t.type==="income").reduce((a,t)=>a+t.amount,0);
-          const outSum=hit.filter(t=>t.type==="expense").reduce((a,t)=>a+t.amount,0);
+          const inSum=hit.filter(t=>t.type==="income"||t.type==="refund"||(acctFilter&&t.type==="transfer"&&t.to===acctFilter)).reduce((a,t)=>a+t.amount,0);
+          const outSum=hit.filter(t=>t.type==="expense"||(acctFilter&&t.type==="transfer"&&t.from===acctFilter)).reduce((a,t)=>a+t.amount,0);
           return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
             <h2 style="margin:0">This month &middot; ${hit.length}${hit.length!==all.length?" of "+all.length:""} entries</h2>
             ${carryTx().length?`<span style="font-size:11px;color:var(--muted)">+${carryTx().length} carried</span>`:""}
           </div>
+          ${acctFilter?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span class="pill" style="background:#E8E7F2;color:var(--violet);font-size:11px;padding:5px 9px">${esc(acctFilter)}</span>
+            <span class="sub" style="flex:1">only entries on this account</span>
+            <button class="ic" onclick="clearAcct()">Show all</button></div>`:""}
           <input type="text" placeholder="Filter by category, note or account" value="${esc(txq)}"
             oninput="setQ(this.value)" style="margin-bottom:9px">
           ${hit.length?`<div class="bedit" style="margin-bottom:6px;padding-bottom:7px;border-bottom:1px solid var(--line)">
-            <span>${txq?"Matching":"Month"} total</span>
+            <span>${acctFilter?esc(acctFilter):txq?"Matching":"Month"} total</span>
             <span class="num" style="font-size:12px">
               <span style="color:var(--teal)">+${inr(inSum)}</span> &nbsp;
               <span style="color:var(--red)">&minus;${inr(outSum)}</span></span></div>`:""}`;})()}
@@ -1514,6 +1550,7 @@ function render(){
       </div>
     </div>
   </div>`;
+  restoreDraft();
 }
 
 function acctSelect(id,sel){
@@ -1949,8 +1986,13 @@ function shift(n){cur=new Date(cur.getFullYear(),cur.getMonth()+n,1);arm=null;re
 function setView(v){view=v;render();}
 function setPane(p){pane=p;arm=null;render();}
 function setMain(t){mainTab=t;arm=null;render();}
-function setMob(t){mobTab=t;arm=null;render();window.scrollTo(0,0);}
-function setTx(t){txType=t;render();}
+function setMob(t){mobTab=t;arm=null;render();
+  if(t==="add"&&window.innerWidth<900){const a=document.getElementById("a");
+    if(a&&!a.value)try{a.focus({preventScroll:true});}catch(e){}}
+  window.scrollTo(0,0);}
+function setTx(t){
+  if(draft){const keep={};["a","dt","tm","nt"].forEach(k=>{if(draft[k]!==undefined)keep[k]=draft[k];});draft=keep;}
+  txType=t;render();}
 function reimburse(id){refFor=id;txType="refund";editTx=null;mobTab="add";render();
   toast("Recording a contribution against that expense");}
 function toggleAll(){showAll=!showAll;render();}
@@ -1961,6 +2003,30 @@ function tog(c){open[c]=!open[c];render();}
 function gtog(c){gopen[c]=!gopen[c];render();}
 function setInc(v){S.income=+v||0;save();render();}
 function val(id){const e=document.getElementById(id);return e?e.value:"";}
+// --- the Record form is rebuilt on every render; keep what you were typing ---
+const DRAFT_IDS=["a","dt","tm","sb","fa","ta","nt","ow","isb","rf"];
+let draft=null, skipCapture=false;
+function captureDraft(){
+  if(skipCapture){skipCapture=false;draft=null;return;}   // an entry was just saved or cancelled
+  const d={}; let any=false;
+  DRAFT_IDS.forEach(id=>{const e=document.getElementById(id); if(e){d[id]=e.value; if(e.value!=="")any=true;}});
+  if(any)draft=d;
+}
+function restoreDraft(){
+  if(!draft)return;
+  DRAFT_IDS.forEach(id=>{const e=document.getElementById(id);
+    if(e&&draft[id]!==undefined&&draft[id]!==""){
+      if(e.tagName==="SELECT"){ if([...e.options].some(o=>o.value===draft[id]))e.value=draft[id]; }
+      else e.value=draft[id];
+    }});
+  const a=document.getElementById("a"); if(a&&a.value)calcHint(a.value);
+}
+function clearDraft(){draft=null;skipCapture=true;}
+function formBusy(){
+  const ae=document.activeElement;
+  if(ae&&/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))return true;
+  const a=document.getElementById("a"); return !!(a&&a.value);
+}
 // evaluate + - * / ( ) and decimals only; anything else is rejected
 function calcAmt(str){
   const t=String(str||"").replace(/[₹,\s]/g,"");
@@ -2019,6 +2085,7 @@ function add(){
     if(f===to)return toast("Pick two different accounts");
     t.from=f; t.to=to; gopen[groupOf(to)?groupOf(to).name:""]=true;
   }
+  clearDraft();
   if(editTx){
     const ix=S.txs.findIndex(x=>x.id===editTx.id);
     t.id=editTx.id;
@@ -2038,7 +2105,7 @@ function editEntry(id){
   const t=S.txs.find(x=>x.id===id); if(!t)return;
   editTx=t; txType=t.type||"expense"; mobTab="add"; render();
   toast("Editing — change what you need, then Update");}
-function cancelEdit(){editTx=null;render();}
+function cancelEdit(){editTx=null;clearDraft();render();}
 function ruleFrom(id){
   const t=S.txs.find(x=>x.id===id); if(!t)return;
   if((S.rules||[]).some(r=>r.srcId===id))return toast("Already repeating");
@@ -2066,7 +2133,12 @@ function setQ(v){txq=v;showAllTx=false;
   const inp=el&&el.querySelector('input[placeholder^="Filter by"]');
   if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}}
 function toggleAllTx(){showAllTx=!showAllTx;render();}
+function showAcct(n){acctFilter=n;txq="";showAllTx=false;
+  if(typeof setMob==="function"&&window.innerWidth<900)setMob("entries"); else render();
+  toast("Showing "+n+" for "+mname(cur));}
+function clearAcct(){acctFilter="";render();}
 function filterTx(list){
+  if(acctFilter)list=list.filter(t=>t.from===acctFilter||t.to===acctFilter);
   const s=txq.trim().toLowerCase(); if(!s)return list;
   return list.filter(t=>[t.sub,t.note,t.from,t.to,catOf(t.sub)]
     .filter(Boolean).some(v=>String(v).toLowerCase().includes(s)));}
@@ -2081,7 +2153,7 @@ function csv(){
 window.addEventListener("beforeunload",e=>{
   if(dirty){e.preventDefault();e.returnValue="You have tracker changes that haven't been downloaded.";return e.returnValue;}
 });
-setInterval(()=>{if(ready&&!editTx)render();},60000);   // keep the clock and "days left" honest
+setInterval(()=>{if(ready&&!editTx&&!formBusy())render();},60000);   // clock tick, but never over a half-typed entry
 load();
 </script>
 
