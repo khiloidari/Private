@@ -1,4 +1,4 @@
-const CACHE = "expenses-v13";
+const CACHE = "expenses-v14";
 const SHELL = ["index.html","manifest.webmanifest",
   "icon-tracker-192.png","icon-tracker-512.png","icon-tracker-maskable.png"];
 self.addEventListener("install", e => {

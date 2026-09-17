@@ -212,6 +212,7 @@ const DEF_ITREE=[
 ];
 const freshITree=()=>DEF_ITREE.map(([c,subs])=>({name:c,subs:subs.map(n=>({name:n}))}));
 const UNASSIGNED="Unassigned", NOACCT="No account";
+const BUILD="2026-09-17c";
 const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:"",period:{mode:"calendar",day:1,subs:[]}};
 let cur=new Date(new Date().getFullYear(),new Date().getMonth(),1), view="variable", pane="cats", txType="expense", mainTab="overview";
@@ -1300,7 +1301,7 @@ function render(){
     <div><h1>Expense tracker</h1>
       <div class="sub">${new Date().toLocaleString("en-IN",{weekday:"short",day:"numeric",month:"short",
         year:"numeric",hour:"2-digit",minute:"2-digit"})} &middot; ${S.tree.length} categories &middot;
-        ${S.groups.length} account groups</div></div>
+        ${S.groups.length} account groups &middot; <span class="num" title="Build version">v${BUILD}</span></div></div>
     <div style="display:flex;align-items:center;gap:8px">
       <span class="num" style="font-size:10px;color:${dirty?"var(--red)":"var(--muted)"}">
         ${dirty?"UNSAVED":mode==="app"?"saved to your account":mode==="local"?"saved in this browser":fileHandle?"saved to "+esc(fileName):"not saving"}</span>
@@ -2275,7 +2276,6 @@ setInterval(()=>{if(ready&&!editTx&&!formBusy())render();},60000);   // clock ti
 load();
 </script>
 
-<div id="buildstamp" style="text-align:center;padding:14px 0 calc(90px + env(safe-area-inset-bottom));font:10px 'IBM Plex Mono',monospace;color:#6B7789">build 2026-09-17 tracker</div>
 <script>
 (function(){
   if(!("serviceWorker" in navigator))return;
