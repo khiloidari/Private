@@ -212,7 +212,7 @@ const DEF_ITREE=[
 ];
 const freshITree=()=>DEF_ITREE.map(([c,subs])=>({name:c,subs:subs.map(n=>({name:n}))}));
 const UNASSIGNED="Unassigned", NOACCT="No account";
-const BUILD="2026-09-17c";
+const BUILD="2026-09-17d";
 const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:"",period:{mode:"calendar",day:1,subs:[]}};
 let cur=new Date(new Date().getFullYear(),new Date().getMonth(),1), view="variable", pane="cats", txType="expense", mainTab="overview";
@@ -663,7 +663,7 @@ function effDate(t){                           // card purchases after the cutof
   return t.date;
 }
 function txMonth(t){return periodOf(effDate(t));}
-const shifted=t=>txMonth(t)!==t.date.slice(0,7);
+const shifted=t=>txMonth(t)!==periodOf(t.date);   // moved by a card bill cycle, not by the period boundary
 const FREQ={monthly:"Monthly",quarterly:"Every 3 months",yearly:"Yearly",weekly:"Weekly"};
 function occDate(r,n){
   const s=new Date(r.start);
@@ -735,6 +735,13 @@ function monthTx(){const k=mk(cur);return S.txs.filter(t=>txMonth(t)===k);}
 // dated in the month you're looking at, but counted in a later one
 function carryTx(){const k=mk(cur);
   return S.txs.filter(t=>t.date.slice(0,7)===k&&txMonth(t)!==k);}
+// dated in this calendar month but belonging to an EARLIER period (income / fixed-day modes: before the period began)
+function carryBack(){const k=mk(cur);return carryTx().filter(t=>txMonth(t)<k);}
+// dated in this calendar month but belonging to a LATER period (card purchases past their bill date)
+function carryFwd(){const k=mk(cur);return carryTx().filter(t=>txMonth(t)>k);}
+// short label for the period an entry is counted in: "Aug" in calendar mode, "17 Aug – 16 Sep" otherwise
+function periodPill(k){if(!k)return "\u2014"; if(periodCfg().mode==="calendar")return cycLabel(k);
+  const [a,b]=periodBounds(k); return fdate(a)+" \u2013 "+fdate(b);}
 function monthExp(){return monthTx().filter(t=>t.type==="expense");}
 function refundsFor(id){return S.txs.filter(t=>t.type==="refund"&&t.ref===id)
   .reduce((a,t)=>a+t.amount,0);}
@@ -1313,7 +1320,7 @@ function render(){
       const from=new Date(y,mo-1,Math.min(sd,dimOf(y,mo-1))+1);
       const to=new Date(y,mo,Math.min(sd,dimOf(y,mo)));
       return `<b>${esc(a.name)}</b> ${fdate(from)}–${fdate(to)}`;}).join(" &middot; ")}
-    &middot; everything else 1–${dimOf(cur.getFullYear(),cur.getMonth())} ${mname(cur).split(" ")[0]}</div>`:""}
+    &middot; everything else ${periodCfg().mode==="calendar"?`1–${dimOf(cur.getFullYear(),cur.getMonth())} ${mname(cur).split(" ")[0]}`:(()=>{const [a,b]=periodBounds(mk(cur));return fdate(a)+"–"+fdate(b);})()}</div>`:""}
 
   <div class="runway" data-sec="home">
     <div class="stat"><div class="k">Spent${view!=="all"?" &middot; "+view:""}</div>
@@ -1443,7 +1450,7 @@ function render(){
           <input type="text" placeholder="Filter by category, note or account" value="${esc(txq)}"
             oninput="setQ(this.value)" style="margin-bottom:9px">
           ${hit.length?`<div class="bedit" style="margin-bottom:6px;padding-bottom:7px;border-bottom:1px solid var(--line)">
-            <span>${catFilter?esc(catFilter.name):acctFilter?esc(acctFilter):txq?"Matching":"Month"} total</span>
+            <span>${catFilter?esc(catFilter.name):acctFilter?esc(acctFilter):txq?"Matching":periodCfg().mode==="calendar"?"Month":"Period"} total</span>
             <span class="num" style="font-size:12px">
               <span style="color:var(--teal)">+${inr(inSum)}</span> &nbsp;
               <span style="color:var(--red)">&minus;${inr(outSum)}</span></span></div>`:""}`;})()}
@@ -1479,25 +1486,33 @@ function render(){
           if(n>lim)return `<button class="btn ghost sm" style="width:100%;margin-top:9px" onclick="toggleAllTx()">
             ${showAllTx?"Show fewer":"Show all "+n+" entries"}</button>`;
           return "";})()}
-        ${carryTx().length?`
-          <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">
+        ${(()=>{const row=t=>{
+            const where=t.type==="transfer"?esc(t.from)+" &rarr; "+esc(t.to)
+              :t.type==="income"?esc(t.sub||t.note||"Income")+" &rarr; "+esc(t.to)
+                +(t.sub&&t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':"")
+              :esc(t.sub)+(t.from?' <span style="color:var(--muted)">&middot; '+esc(t.from)+'</span>':"");
+            return `<div class="tx" style="opacity:.62">
+              <div class="d">${t.date.slice(8)}/${t.date.slice(5,7)}</div>
+              <div class="pill" style="background:#EFEAF6;color:var(--violet);white-space:nowrap">${periodPill(txMonth(t))}</div>
+              <div class="t">${where}</div>
+              <div class="num" style="font-weight:600">${inr(t.amount)}</div>
+              <button class="ic" onclick="editEntry('${t.id}')" title="Edit">Edit</button>
+              <button class="x" onclick="del('${t.id}')" title="Delete">&times;</button></div>`;};
+          const byDate=(a,b)=>(b.date+(b.time||"00:00")).localeCompare(a.date+(a.time||"00:00"));
+          const back=carryBack().sort(byDate), fwd=carryFwd().sort(byDate);
+          const sec=(title,list,note)=>`<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">
             <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
-              font-weight:600;margin-bottom:6px">Bought this month &middot; counted later</div>
-            ${carryTx().slice().sort((a,b)=>(b.date+(b.time||"00:00")).localeCompare(a.date+(a.time||"00:00"))).map(t=>{
-              const where=t.type==="transfer"?esc(t.from)+" &rarr; "+esc(t.to)
-                :t.type==="income"?esc(t.sub||t.note||"Income")+" &rarr; "+esc(t.to)
-              +(t.sub&&t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':"")
-                :esc(t.sub)+(t.from?' <span style="color:var(--muted)">&middot; '+esc(t.from)+'</span>':"");
-              return `<div class="tx" style="opacity:.62">
-                <div class="d">${t.date.slice(8)}/${t.date.slice(5,7)}</div>
-                <div class="pill" style="background:#EFEAF6;color:var(--violet)">${cycLabel(txMonth(t))}</div>
-                <div class="t">${where}</div>
-                <div class="num" style="font-weight:600">${inr(t.amount)}</div>
-                <button class="ic" onclick="editEntry('${t.id}')" title="Edit">Edit</button>
-                <button class="x" onclick="del('${t.id}')" title="Delete">&times;</button></div>`;}).join("")}
-            <div class="sub" style="margin-top:7px">Past their card's bill date, so they land on the next
-              statement and count in that month's totals — not this one.</div>
-          </div>`:""}
+              font-weight:600;margin-bottom:6px">${title}</div>${list.map(row).join("")}
+            <div class="sub" style="margin-top:7px">${note}</div></div>`;
+          const prevK=back.length?txMonth(back[0]):null;
+          return (back.length?sec(
+              "Before this period began &middot; counted in "+esc(periodLabel(prevK)),back,
+              periodCfg().mode==="income"
+                ?`Logged in ${mname(cur).split(" ")[0]} but before the income that started this period, so they belong to the previous period and are already in its totals. `
+                :`Logged before the ${periodCfg().day||16}th, so they belong to the previous period and are already in its totals. `
+              +`<a href="#" onclick="shift(-1);return false">View that period</a>`):"")
+            +(fwd.length?sec("Bought this month &middot; counted later",fwd,
+              "Past their card's bill date, so they land on the next statement and count in the next period's totals &mdash; not this one."):"");})()}
       </div>
       </div>
     </div>
