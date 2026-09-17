@@ -109,6 +109,7 @@ const SETS={
   symbols:"!@#$%^&*()-_=+[]{};:,.?/"
 };
 const AMBIG="O0oIl1|`'\"{}[]()/\\";
+const VBUILD="2026-09-17c";
 const KEY="krish-vault:v1";
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
 const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
@@ -391,7 +392,8 @@ function render(){
   <div class="bar">
     <div><h1>Password vault</h1>
       <div class="sub">${V.entries.length} entries &middot; AES-GCM &middot; locks after ${V.settings.idle||5} min idle
-        &middot; ${STORAGE_OK?"saved to your account":"this tab only"}${dirty?" &middot; unsaved":""}</div></div>
+        &middot; ${STORAGE_OK?"saved to your account":"this tab only"}${dirty?" &middot; unsaved":""}
+        &middot; <span class="num" title="Build version">v${VBUILD}</span></div></div>
     <div style="display:flex;gap:6px">
       ${STORAGE_OK===false?`<button class="btn ghost sm" onclick="downloadVault()">Download vault</button>`:""}
       <button class="btn ghost sm" onclick="lock()">Lock now</button></div>
@@ -568,7 +570,8 @@ function settings(){
 function lockScreen(){
   return `<div class="lock">
     <div class="bar"><div><h1>Password vault</h1>
-      <div class="sub">${exists?"Encrypted. Enter your passphrase.":"No vault on this account yet."}</div></div></div>
+      <div class="sub">${exists?"Encrypted. Enter your passphrase.":"No vault on this account yet."}
+        &middot; <span class="num">v${VBUILD}</span></div></div></div>
     <div class="warn">
       <b>Read this before you use it.</b> Your entries are encrypted in the browser with AES-GCM under a key
       derived from your passphrase (PBKDF2, ${ITER.toLocaleString()} rounds). The passphrase is never stored or sent
@@ -658,7 +661,6 @@ window.addEventListener("beforeunload",e=>{
 })();
 </script>
 
-<div id="buildstamp" style="text-align:center;padding:14px 0 calc(90px + env(safe-area-inset-bottom));font:10px 'IBM Plex Mono',monospace;color:#6B7789">build 2026-09-16 vault</div>
 <script>
 (function(){
   if(!("serviceWorker" in navigator))return;
