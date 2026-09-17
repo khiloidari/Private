@@ -213,8 +213,8 @@ const DEF_ITREE=[
 const freshITree=()=>DEF_ITREE.map(([c,subs])=>({name:c,subs:subs.map(n=>({name:n}))}));
 const UNASSIGNED="Unassigned", NOACCT="No account";
 const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
-let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:""};
-let cur=new Date(), view="variable", pane="cats", txType="expense", mainTab="overview";
+let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:"",period:{mode:"calendar",day:1,subs:[]}};
+let cur=new Date(new Date().getFullYear(),new Date().getMonth(),1), view="variable", pane="cats", txType="expense", mainTab="overview";
 let catTab="expense"; const TR=()=>catTab==="income"?S.itree:S.tree;
 let acctFilter=""; let catFilter=null; let fixing=null; let refFor=null; let mobTab="home"; let editTx=null, txq="", showAllTx=false, restoreArm=null, pendingRestore=null; let open={}, gopen={}, sopen={}, showAll=false, edit=false, gedit=false, arm=null, ready=false;
 
@@ -445,6 +445,7 @@ function balance(n){
 }
 
 function hydrate(p){
+  _ps=null;
   if(!p||!p.tree||!p.tree.length)return false;
   S.tree=p.tree.map(h=>({mode:"sub",budget:0,type:"V",...h,
     mode:h.mode||"sub",budget:h.budget||0,type:h.type||"V"}));
@@ -455,6 +456,7 @@ function hydrate(p){
   S.income=+p.income||0;
   S.carry=!!p.carry;              // budget rollover setting
   S.budgetStart=(p.budgetStart||"").slice(0,7);   // months before this have no budget
+  S.period=p.period&&p.period.mode?p.period:{mode:"calendar",day:1,subs:[]};
   return true;
 }
 async function readSaved(k){
@@ -479,6 +481,7 @@ async function load(){
   if(!S.groups||!S.groups.length)S.groups=freshAccts();
   if(!Array.isArray(S.rules))S.rules=[];
   ready=true;
+  (function(){const k=periodOf(isoOf(new Date()));cur=new Date(+k.split("-")[0],+k.split("-")[1]-1,1);})();
   const made=runRules();
   render();
   if(made)toast("Added "+made+" recurring entr"+(made>1?"ies":"y"));
@@ -526,6 +529,7 @@ async function linkFile(){
   }catch(e){ /* user cancelled the picker */ }
 }
 async function save(){
+  _ps=null;
   let ok=false;
   if(mode==="app"){
     try{ await window.storage.set(KEY,JSON.stringify(S)); ok=true; }
@@ -575,20 +579,89 @@ function loadPastedData(){
 }
 function toast(m){const t=document.createElement("div");t.className="toast";t.textContent=m;
   document.body.appendChild(t);setTimeout(()=>t.remove(),2400);}
-function txMonth(t){
-  // an expense on a card after its bill-generation day belongs to the next statement cycle
+/* ---- budget periods: calendar month, a fixed day each month, or whenever income lands ---- */
+function periodCfg(){return S.period||{mode:"calendar",day:1,subs:[]};}
+let _ps=null;                                  // cached; cleared whenever entries or settings change
+function periodStarts(){                       // income mode: sorted dates on which a period begins
+  if(_ps)return _ps;
+  const cfg=periodCfg(); if(cfg.mode!=="income")return (_ps=[]);
+  const subs=cfg.subs||[];
+  const dates=S.txs.filter(t=>t.type==="income"&&!isCardAcct(t.to)&&(!subs.length||subs.includes(t.sub)))
+    .map(t=>t.date).sort();
+  const out=[]; let lastKey="";
+  dates.forEach(d=>{const k=d.slice(0,7); if(k!==lastKey){out.push(d);lastKey=k;}});  // one start per month
+  return (_ps=out);
+}
+// everything before the first income is one period of its own, keyed to the month before that income
+function prePeriodKey(){
+  const st=periodStarts(); if(!st.length)return null;
+  const d=new Date(st[0]); const p=new Date(d.getFullYear(),d.getMonth()-1,1);
+  return p.getFullYear()+"-"+String(p.getMonth()+1).padStart(2,"0");
+}
+function earliestDate(){let f=null;S.txs.forEach(t=>{if(!f||t.date<f)f=t.date;});return f;}
+function periodOf(iso){                        // which period (keyed YYYY-MM) an effective date belongs to
+  const cfg=periodCfg();
+  if(cfg.mode==="anchor"){
+    const d=new Date(iso), a=Math.max(1,Math.min(28,+cfg.day||1));
+    if(d.getDate()>=a)return iso.slice(0,7);
+    const p=new Date(d.getFullYear(),d.getMonth()-1,1);
+    return p.getFullYear()+"-"+String(p.getMonth()+1).padStart(2,"0");
+  }
+  if(cfg.mode==="income"){
+    const starts=periodStarts(); let key=null;
+    for(const d of starts){ if(d<=iso)key=d.slice(0,7); else break; }
+    if(key)return key;
+    return starts.length?prePeriodKey():iso.slice(0,7);   // before the first income: one pre-period
+  }
+  return iso.slice(0,7);
+}
+function periodBounds(key){                    // [startDate, endDate] of a period key
+  const cfg=periodCfg(); const [y,m]=key.split("-").map(Number);
+  if(cfg.mode==="anchor"){
+    const a=Math.max(1,Math.min(28,+cfg.day||1));
+    return [new Date(y,m-1,a), new Date(y,m,a-1)];
+  }
+  if(cfg.mode==="income"){
+    const starts=periodStarts();
+    if(starts.length&&key===prePeriodKey()){
+      const first=new Date(starts[0]);
+      const en=new Date(first.getTime()-86400000);
+      const e0=earliestDate(); const st=e0&&e0<starts[0]?new Date(e0):new Date(en.getFullYear(),en.getMonth(),1);
+      return [st,en];
+    }
+    const i=starts.findIndex(d=>d.slice(0,7)===key);
+    if(i>=0){
+      const st=new Date(starts[i]);
+      // open period: assume the next income lands about a month after this one
+      const en=i+1<starts.length?new Date(new Date(starts[i+1]).getTime()-86400000)
+        :new Date(st.getFullYear(),st.getMonth()+1,st.getDate()-1);
+      return [st,en];
+    }
+  }
+  return [new Date(y,m-1,1), new Date(y,m,0)];
+}
+function periodLabel(key){
+  const cfg=periodCfg();
+  if(cfg.mode==="calendar")return new Date(+key.split("-")[0],+key.split("-")[1]-1,1)
+    .toLocaleDateString("en-IN",{month:"long",year:"numeric"});
+  const [a,b]=periodBounds(key);
+  const pre=cfg.mode==="income"&&key===prePeriodKey();
+  return fdate(a)+" \u2013 "+fdate(b)+" "+b.getFullYear()+(pre?" (before first income)":"");
+}
+function effDate(t){                           // card purchases after the cutoff land on the next statement date
   if(t.type==="expense"&&t.from){
     const c=cardOf(t.from);
     if(c&&+c.stmtDay){
       const d=new Date(t.date);
       if(d.getDate()>+c.stmtDay){
-        const n=new Date(d.getFullYear(),d.getMonth()+1,1);
-        return n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0");
+        const n=new Date(d.getFullYear(),d.getMonth()+1,Math.min(+c.stmtDay,dimOf(d.getFullYear(),d.getMonth()+1)));
+        return isoOf(n);
       }
     }
   }
-  return t.date.slice(0,7);
+  return t.date;
 }
+function txMonth(t){return periodOf(effDate(t));}
 const shifted=t=>txMonth(t)!==t.date.slice(0,7);
 const FREQ={monthly:"Monthly",quarterly:"Every 3 months",yearly:"Yearly",weekly:"Weekly"};
 function occDate(r,n){
@@ -724,6 +797,13 @@ function moveSubTo(i,j,ti){
   T[ti].subs.push(sub);
   open[T[ti].name]=true; save(); render();
   toast(sub.name+" moved to "+T[ti].name);}
+function setPeriodMode(v){_ps=null;S.period=Object.assign({mode:"calendar",day:16,subs:[]},periodCfg(),{mode:v});
+  if(v==="anchor"&&!S.period.day)S.period.day=16;
+  save(); cur=(function(){const k=periodOf(isoOf(new Date()));return new Date(+k.split("-")[0],+k.split("-")[1]-1,1);})();
+  render(); toast(v==="calendar"?"Calendar months":v==="anchor"?"Periods start on the "+S.period.day+"th":"Periods start when income arrives");}
+function setPeriodDay(v){S.period=Object.assign({},periodCfg(),{day:Math.max(1,Math.min(28,+v||16))});save();render();}
+function togPeriodSub(n,on){_ps=null;const c=Object.assign({subs:[]},periodCfg());
+  c.subs=on?[...new Set([...(c.subs||[]),n])]:(c.subs||[]).filter(x=>x!==n); S.period=c; save(); render();}
 function setBudgetStart(v){S.budgetStart=(v||"").slice(0,7);save();render();
   toast(S.budgetStart?"Budgets apply from "+cycLabel(S.budgetStart)+" "+S.budgetStart.slice(0,4)+" — earlier months carry nothing":"Budgets apply from your first entry");}
 const budgetsOn=k=>!S.budgetStart||k>=S.budgetStart;
@@ -907,12 +987,15 @@ function resetAccts(){if(arm!=="ra"){arm="ra";return render();}
 
 /* ---------- analytics ---------- */
 function monthKeys(n){const o=[];for(let i=n-1;i>=0;i--){
-  const d=new Date(cur.getFullYear(),cur.getMonth()-i,1);o.push([mk(d),d.toLocaleDateString("en-IN",{month:"short"})]);}return o;}
+  const d=new Date(cur.getFullYear(),cur.getMonth()-i,1), k=mk(d);
+  const lbl=periodCfg().mode==="calendar"?d.toLocaleDateString("en-IN",{month:"short"})
+    :periodBounds(k)[0].toLocaleDateString("en-IN",{day:"numeric",month:"short"});
+  o.push([k,lbl]);}return o;}
 function expIn(k){return S.txs.filter(t=>t.type==="expense"&&txMonth(t)===k).reduce((a,t)=>a+netAmt(t),0);}
 function incIn(k){return S.txs.filter(t=>t.type==="income"&&t.date.slice(0,7)===k&&!isCardAcct(t.to))
   .reduce((a,t)=>a+t.amount,0);}
 function nwAt(k){
-  const end=k+"-31";let tot=0;
+  const end=isoOf(periodBounds(k)[1]);let tot=0;   // balance at the end of the period, not the calendar month
   S.groups.forEach(g=>g.accts.forEach(a=>{
     let b=a.open;
     S.txs.forEach(t=>{if(t.date<=end){if(t.to===a.name)b+=t.amount;if(t.from===a.name)b-=t.amount;}});
@@ -968,9 +1051,10 @@ function analytics(){
   const k=mk(cur), thisM=expIn(k);
   const prevKey=keys[keys.indexOf(k)-1]||""; const prevM=prevKey?expIn(prevKey):0;
   const mom=prevM?((thisM-prevM)/prevM)*100:0;
-  const now=new Date(),same=mk(now)===k;
-  const dim=new Date(cur.getFullYear(),cur.getMonth()+1,0).getDate();
-  const done=same?now.getDate():dim;
+  const now=new Date(),same=periodOf(isoOf(now))===k;
+  const [pS,pE]=periodBounds(k);
+  const dim=Math.max(1,Math.round((pE-pS)/86400000)+1);
+  const done=same?Math.max(1,Math.round((now-pS)/86400000)+1):dim;
   const pace=done?thisM/done*dim:thisM;
 
   // category mix, this month vs own median
@@ -1193,9 +1277,10 @@ function render(){
     groups.push({name:UNASSIGNED,sp:cs,bd:0,subs});spent+=cs;}
   groups.sort((a,b)=>(b.sp-a.sp)||(b.bd-a.bd));
 
-  const now=new Date(),same=mk(now)===mk(cur);
-  const dim=new Date(cur.getFullYear(),cur.getMonth()+1,0).getDate();
-  const left=same?dim-now.getDate():0;
+  const now=new Date(), nowKey=periodOf(isoOf(now)), same=nowKey===mk(cur);
+  const [pStart,pEnd]=periodBounds(mk(cur));
+  const midnight=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const left=same?Math.max(0,Math.round((pEnd-midnight)/86400000)):0;
   const pct=budget?spent/budget:0;
   const col=pct>1?"var(--red)":pct>.85?"var(--amber)":"var(--teal)";
   const mIn=monthTx().filter(t=>t.type==="income"&&!isCardAcct(t.to)).reduce((a,t)=>a+t.amount,0);
@@ -1219,10 +1304,10 @@ function render(){
     <div style="display:flex;align-items:center;gap:8px">
       <span class="num" style="font-size:10px;color:${dirty?"var(--red)":"var(--muted)"}">
         ${dirty?"UNSAVED":mode==="app"?"saved to your account":mode==="local"?"saved in this browser":fileHandle?"saved to "+esc(fileName):"not saving"}</span>
-    <div class="mo"><button onclick="shift(-1)">&lsaquo;</button><span>${mname(cur)}</span><button onclick="shift(1)">&rsaquo;</button></div></div>
+    <div class="mo"><button onclick="shift(-1)">&lsaquo;</button><span>${periodLabel(mk(cur))}</span><button onclick="shift(1)">&rsaquo;</button></div></div>
   </div>
   ${cardsWithCycle().length?`<div class="sub" data-sec="home" style="margin:-8px 0 14px">
-    ${mname(cur)} covers ${cardsWithCycle().map(a=>{
+    ${periodCfg().mode!=="calendar"?`<b>Budget period ${periodLabel(mk(cur))}</b> &middot; `:""}${mname(cur)} covers ${cardsWithCycle().map(a=>{
       const sd=+a.stmtDay, y=cur.getFullYear(), mo=cur.getMonth();
       const from=new Date(y,mo-1,Math.min(sd,dimOf(y,mo-1))+1);
       const to=new Date(y,mo,Math.min(sd,dimOf(y,mo)));
@@ -1652,6 +1737,26 @@ function budgetPanel(sp){
       <label class="tog" style="padding:0 0 8px">
         <input type="checkbox" ${S.carry?"checked":""} onchange="setCarry(this.checked)">
         Carry unspent budget into the next month</label>
+      <label>Budget period</label>
+      <select onchange="setPeriodMode(this.value)" style="margin-bottom:6px">
+        <option value="calendar"${periodCfg().mode==="calendar"?" selected":""}>Calendar month (1st to end)</option>
+        <option value="anchor"${periodCfg().mode==="anchor"?" selected":""}>Fixed day each month</option>
+        <option value="income"${periodCfg().mode==="income"?" selected":""}>From the day income arrives</option>
+      </select>
+      ${periodCfg().mode==="anchor"?`<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <span class="sub">Starts on day</span>
+        <input type="number" min="1" max="28" value="${periodCfg().day||16}" onchange="setPeriodDay(this.value)" style="width:72px">
+        <span class="sub">of each month</span></div>`:""}
+      ${periodCfg().mode==="income"?`<div style="margin-bottom:6px">
+        <span class="sub">Which income starts a period (none ticked = any income)</span>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">
+          ${(S.itree||[]).flatMap(h=>h.subs.map(x=>x.name)).map(n=>`<label class="tog" style="padding:3px 8px;border:1px solid var(--line);border-radius:6px;font-size:11px">
+            <input type="checkbox" ${(periodCfg().subs||[]).includes(n)?"checked":""} onchange="togPeriodSub('${q(esc(n))}',this.checked)">${esc(n)}</label>`).join("")}
+        </div>
+        <div class="sub" style="margin-top:5px">Each period runs from one income date to the day before the next. If two incomes land in the same calendar month, the first one starts the period. Everything before your first income is treated as one period of its own${prePeriodKey()?` (${periodLabel(prePeriodKey())})`:""}.</div></div>`:""}
+      <div class="sub" style="margin-bottom:9px">${periodCfg().mode==="calendar"?"Budgets reset on the 1st."
+        :periodCfg().mode==="anchor"?"Budgets reset on the "+(periodCfg().day||16)+"th. Spending before that day counts in the previous period."
+        :"Budgets reset when income is recorded. Spending before it arrives counts against the previous period."}</div>
       <label>Budgets apply from</label>
       <div style="display:flex;gap:6px;align-items:center">
         <input type="month" value="${S.budgetStart}" onchange="setBudgetStart(this.value)" style="flex:1">
@@ -2170,7 +2275,7 @@ setInterval(()=>{if(ready&&!editTx&&!formBusy())render();},60000);   // clock ti
 load();
 </script>
 
-<div id="buildstamp" style="text-align:center;padding:14px 0 calc(90px + env(safe-area-inset-bottom));font:10px 'IBM Plex Mono',monospace;color:#6B7789">build 2026-09-16 tracker</div>
+<div id="buildstamp" style="text-align:center;padding:14px 0 calc(90px + env(safe-area-inset-bottom));font:10px 'IBM Plex Mono',monospace;color:#6B7789">build 2026-09-17 tracker</div>
 <script>
 (function(){
   if(!("serviceWorker" in navigator))return;
