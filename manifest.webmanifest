@@ -2,15 +2,28 @@
   "name": "Expense Tracker",
   "short_name": "Expenses",
   "description": "Budgets, accounts, credit cards, EMIs",
-  "id": "expenses",
-  "start_url": "index.html",
-  "scope": "./",
+  "id": "/Private/",
+  "start_url": "/Private/index.html",
+  "scope": "/Private/",
   "display": "standalone",
   "background_color": "#EEF0F4",
   "theme_color": "#16202E",
   "icons": [
-    {"src":"icon-tracker-192.png","sizes":"192x192","type":"image/png"},
-    {"src":"icon-tracker-512.png","sizes":"512x512","type":"image/png"},
-    {"src":"icon-tracker-maskable.png","sizes":"512x512","type":"image/png","purpose":"maskable"}
+    {
+      "src": "icon-tracker-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-tracker-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-tracker-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

@@ -1,4 +1,4 @@
-const CACHE = "expenses-v15";
+const CACHE = "expenses-v21";
 const SHELL = ["index.html","manifest.webmanifest",
   "icon-tracker-192.png","icon-tracker-512.png","icon-tracker-maskable.png"];
 self.addEventListener("install", e => {
@@ -12,7 +12,6 @@ self.addEventListener("activate", e => {
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
   const url = new URL(e.request.url);
-  if (url.pathname.includes("/vault/")) return;          // the vault has its own worker
   e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit =>
     hit || fetch(e.request).then(res => {
       if (res.ok && url.origin === location.origin) {

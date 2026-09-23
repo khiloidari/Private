@@ -212,7 +212,7 @@ const DEF_ITREE=[
 ];
 const freshITree=()=>DEF_ITREE.map(([c,subs])=>({name:c,subs:subs.map(n=>({name:n}))}));
 const UNASSIGNED="Unassigned", NOACCT="No account";
-const BUILD="2026-09-17d";
+const BUILD="2026-09-17h";
 const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:"",period:{mode:"calendar",day:1,subs:[]}};
 let cur=new Date(new Date().getFullYear(),new Date().getMonth(),1), view="variable", pane="cats", txType="expense", mainTab="overview";
@@ -616,6 +616,10 @@ function periodOf(iso){                        // which period (keyed YYYY-MM) a
   }
   return iso.slice(0,7);
 }
+function periodIsOpen(key){
+  const cfg=periodCfg(); if(cfg.mode!=="income")return false;
+  const st=periodStarts(); return !!st.length&&st[st.length-1].slice(0,7)===key;
+}
 function periodBounds(key){                    // [startDate, endDate] of a period key
   const cfg=periodCfg(); const [y,m]=key.split("-").map(Number);
   if(cfg.mode==="anchor"){
@@ -633,9 +637,8 @@ function periodBounds(key){                    // [startDate, endDate] of a peri
     const i=starts.findIndex(d=>d.slice(0,7)===key);
     if(i>=0){
       const st=new Date(starts[i]);
-      // open period: assume the next income lands about a month after this one
       const en=i+1<starts.length?new Date(new Date(starts[i+1]).getTime()-86400000)
-        :new Date(st.getFullYear(),st.getMonth()+1,st.getDate()-1);
+        :new Date(2999,11,31);
       return [st,en];
     }
   }
@@ -647,6 +650,7 @@ function periodLabel(key){
     .toLocaleDateString("en-IN",{month:"long",year:"numeric"});
   const [a,b]=periodBounds(key);
   const pre=cfg.mode==="income"&&key===prePeriodKey();
+  if(periodIsOpen(key))return fdate(a)+" \u2013 ongoing";
   return fdate(a)+" \u2013 "+fdate(b)+" "+b.getFullYear()+(pre?" (before first income)":"");
 }
 function effDate(t){                           // card purchases after the cutoff land on the next statement date
@@ -663,10 +667,12 @@ function effDate(t){                           // card purchases after the cutof
   return t.date;
 }
 function txMonth(t){return periodOf(effDate(t));}
-const shifted=t=>txMonth(t)!==periodOf(t.date);   // moved by a card bill cycle, not by the period boundary
-const FREQ={monthly:"Monthly",quarterly:"Every 3 months",yearly:"Yearly",weekly:"Weekly"};
+const shifted=t=>txMonth(t)!==t.date.slice(0,7);
+const hasRule=t=>!!(t.rid&&(S.rules||[]).some(r=>r.id===t.rid));
+const FREQ={daily:"Daily",weekly:"Weekly",monthly:"Monthly",quarterly:"Every 3 months",yearly:"Yearly"};
 function occDate(r,n){
   const s=new Date(r.start);
+  if(r.freq==="daily"){const d=new Date(s);d.setDate(s.getDate()+n);return d;}
   if(r.freq==="weekly"){const d=new Date(s);d.setDate(s.getDate()+7*n);return d;}
   const step=r.freq==="quarterly"?3:r.freq==="yearly"?12:1;
   const d=new Date(s.getFullYear(),s.getMonth()+step*n,1);
@@ -677,10 +683,11 @@ function runRules(){
   (S.rules||[]).forEach(r=>{
     if(r.paused||!r.start)return;
     let guard=0;
-    while(guard++<600){
+    while(guard++<1200){
       const d=isoOf(occDate(r,r.n||0));
       if(d>today)break;
       if(r.end&&d>r.end)break;
+      if(r.since&&d<r.since){r.n=(r.n||0)+1;continue;}   // skip occurrences before the rule existed
       // never create the same occurrence twice, even if the schedule is re-anchored
       if(!S.txs.some(t=>t.rid===r.id&&t.date===d)){
         S.txs.push({id:Date.now()+"-"+Math.random().toString(36).slice(2,7)+"-"+(r.n||0),rid:r.id,
@@ -732,16 +739,10 @@ function carryMap(ix,upto){
   return out;
 }
 function monthTx(){const k=mk(cur);return S.txs.filter(t=>txMonth(t)===k);}
-// dated in the month you're looking at, but counted in a later one
-function carryTx(){const k=mk(cur);
-  return S.txs.filter(t=>t.date.slice(0,7)===k&&txMonth(t)!==k);}
-// dated in this calendar month but belonging to an EARLIER period (income / fixed-day modes: before the period began)
-function carryBack(){const k=mk(cur);return carryTx().filter(t=>txMonth(t)<k);}
-// dated in this calendar month but belonging to a LATER period (card purchases past their bill date)
-function carryFwd(){const k=mk(cur);return carryTx().filter(t=>txMonth(t)>k);}
-// short label for the period an entry is counted in: "Aug" in calendar mode, "17 Aug – 16 Sep" otherwise
-function periodPill(k){if(!k)return "\u2014"; if(periodCfg().mode==="calendar")return cycLabel(k);
-  const [a,b]=periodBounds(k); return fdate(a)+" \u2013 "+fdate(b);}
+// dated inside the period on screen, but counted in a different one (a card cutoff moved it)
+function carryTx(){
+  const k=mk(cur), [a,b]=periodBounds(k), lo=isoOf(a), hi=isoOf(b);
+  return S.txs.filter(t=>t.date>=lo&&t.date<=hi&&txMonth(t)!==k);}
 function monthExp(){return monthTx().filter(t=>t.type==="expense");}
 function refundsFor(id){return S.txs.filter(t=>t.type==="refund"&&t.ref===id)
   .reduce((a,t)=>a+t.amount,0);}
@@ -881,9 +882,10 @@ function ensureAdjustCat(){
 function adjustCount(name){
   return S.txs.filter(t=>t.adj&&(t.from===name||t.to===name)).length;}
 // correcting a mistyped balance: move the starting point, book nothing
+function owedToBal(i,v){return S.groups[i].kind==="liability"?-(+v||0):(+v||0);}   // cards: you type what you owe
 function correctBalance(i,j,v){
   const a=S.groups[i].accts[j];
-  const target=+v||0, now=balance(a.name), delta=Math.round((target-now)*100)/100;
+  const target=owedToBal(i,v), now=balance(a.name), delta=Math.round((target-now)*100)/100;
   fixing=null;
   if(!delta)return render();
   a.open=Math.round(((+a.open||0)+delta)*100)/100;
@@ -902,7 +904,7 @@ function clearAdjustments(i,j){
 // typing a new balance never rewrites history — it books the difference
 function setBalance(i,j,v){
   const a=S.groups[i].accts[j];
-  const target=+v||0, now=balance(a.name), delta=Math.round((target-now)*100)/100;
+  const target=owedToBal(i,v), now=balance(a.name), delta=Math.round((target-now)*100)/100;
   if(!delta)return render();
   const sub=ensureAdjustCat();
   const t={id:Date.now()+"-"+Math.random().toString(36).slice(2,7),
@@ -911,7 +913,9 @@ function setBalance(i,j,v){
     note:"Balance set to "+inr(target)};
   if(delta>0){t.type="income";t.to=a.name;} else {t.type="expense";t.from=a.name;}
   S.txs.push(t); save(); render();
-  toast((delta>0?"Added ":"Deducted ")+inr(Math.abs(delta))+" under "+sub+" — edit it to reclassify");
+  const liab=S.groups[i].kind==="liability";
+  toast((liab?(delta<0?"Owed increased by ":"Owed reduced by "):(delta>0?"Added ":"Deducted "))
+    +inr(Math.abs(delta))+" under "+sub+" — edit it to reclassify");
 }
 function moveAcct(i,j,d){
   const as=S.groups[i].accts, k=j+d; if(k<0||k>=as.length)return;
@@ -1061,7 +1065,8 @@ function analytics(){
   const mom=prevM?((thisM-prevM)/prevM)*100:0;
   const now=new Date(),same=periodOf(isoOf(now))===k;
   const [pS,pE]=periodBounds(k);
-  const dim=Math.max(1,Math.round((pE-pS)/86400000)+1);
+  const openNow=periodIsOpen(k);
+  const dim=openNow?30:Math.max(1,Math.round((pE-pS)/86400000)+1);
   const done=same?Math.max(1,Math.round((now-pS)/86400000)+1):dim;
   const pace=done?thisM/done*dim:thisM;
 
@@ -1104,7 +1109,7 @@ function analytics(){
       <div class="stat"><div class="k">Your median</div><div class="v">${inr(med)}</div></div>
       <div class="stat"><div class="k">vs last month</div>
         <div class="v" style="color:${mom>0?"var(--red)":"var(--teal)"}">${mom>0?"+":""}${mom.toFixed(0)}%</div></div>
-      <div class="stat"><div class="k">On pace for</div>
+      <div class="stat"><div class="k">On pace for${periodIsOpen(k)?" (30d)":""}</div>
         <div class="v" style="color:${pace>med&&med?"var(--amber)":"var(--teal)"}">${inr(pace)}</div></div>
     </div>
     <div class="sub" style="margin-top:11px">Median beats average here (${inr(avg)}) — it ignores the one-off months
@@ -1288,7 +1293,9 @@ function render(){
   const now=new Date(), nowKey=periodOf(isoOf(now)), same=nowKey===mk(cur);
   const [pStart,pEnd]=periodBounds(mk(cur));
   const midnight=new Date(now.getFullYear(),now.getMonth(),now.getDate());
-  const left=same?Math.max(0,Math.round((pEnd-midnight)/86400000)):0;
+  const openP=periodIsOpen(mk(cur));
+  const left=openP?null:(same?Math.max(0,Math.round((pEnd-midnight)/86400000)):0);
+  const since=Math.max(1,Math.round((midnight-pStart)/86400000)+1);
   const pct=budget?spent/budget:0;
   const col=pct>1?"var(--red)":pct>.85?"var(--amber)":"var(--teal)";
   const mIn=monthTx().filter(t=>t.type==="income"&&!isCardAcct(t.to)).reduce((a,t)=>a+t.amount,0);
@@ -1320,7 +1327,7 @@ function render(){
       const from=new Date(y,mo-1,Math.min(sd,dimOf(y,mo-1))+1);
       const to=new Date(y,mo,Math.min(sd,dimOf(y,mo)));
       return `<b>${esc(a.name)}</b> ${fdate(from)}–${fdate(to)}`;}).join(" &middot; ")}
-    &middot; everything else ${periodCfg().mode==="calendar"?`1–${dimOf(cur.getFullYear(),cur.getMonth())} ${mname(cur).split(" ")[0]}`:(()=>{const [a,b]=periodBounds(mk(cur));return fdate(a)+"–"+fdate(b);})()}</div>`:""}
+    &middot; everything else 1–${dimOf(cur.getFullYear(),cur.getMonth())} ${mname(cur).split(" ")[0]}</div>`:""}
 
   <div class="runway" data-sec="home">
     <div class="stat"><div class="k">Spent${view!=="all"?" &middot; "+view:""}</div>
@@ -1331,8 +1338,8 @@ function render(){
       ${view!=="all"?`<div style="font-size:10px;margin-top:3px;color:var(--muted)">${inr(allBudget)} all</div>`:""}</div>
     <div class="stat"><div class="k">${spent>budget?"Over by":"Left"}</div>
       <div class="v" style="color:${spent>budget?"var(--red)":"var(--teal)"}">${inr(Math.abs(budget-spent))}</div></div>
-    <div class="stat"><div class="k">Per day left</div>
-      <div class="v">${left>0?inr(Math.max(0,budget-spent)/left):"&mdash;"}</div></div>
+    <div class="stat"><div class="k">${left===null?"Per day so far":"Per day left"}</div>
+      <div class="v">${left===null?inr(spent/since):left>0?inr(Math.max(0,budget-spent)/left):"&mdash;"}</div></div>
     <div class="stat"><div class="k">In &minus; out</div>
       <div class="v" style="color:${mIn-mOut>=0?"var(--teal)":"var(--red)"}">${inr(mIn-mOut)}</div></div>
     <div class="stat"><div class="k">Net worth</div>
@@ -1349,7 +1356,7 @@ function render(){
   <div class="card" data-sec="home" style="padding:14px 16px">
     <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
       <span>${(pct*100).toFixed(0)}% of budget used</span>
-      <span class="num">${left>0?left+" days left":"month closed"}</span></div>
+      <span class="num">${left===null?"day "+since+" \u00b7 open until next income":left>0?left+" days left":"period closed"}</span></div>
     <div class="track"><div class="fill" style="width:${Math.min(100,pct*100)}%;background:${col}"></div></div>
   </div>
 
@@ -1450,13 +1457,13 @@ function render(){
           <input type="text" placeholder="Filter by category, note or account" value="${esc(txq)}"
             oninput="setQ(this.value)" style="margin-bottom:9px">
           ${hit.length?`<div class="bedit" style="margin-bottom:6px;padding-bottom:7px;border-bottom:1px solid var(--line)">
-            <span>${catFilter?esc(catFilter.name):acctFilter?esc(acctFilter):txq?"Matching":periodCfg().mode==="calendar"?"Month":"Period"} total</span>
+            <span>${catFilter?esc(catFilter.name):acctFilter?esc(acctFilter):txq?"Matching":"Month"} total</span>
             <span class="num" style="font-size:12px">
               <span style="color:var(--teal)">+${inr(inSum)}</span> &nbsp;
               <span style="color:var(--red)">&minus;${inr(outSum)}</span></span></div>`:""}`;})()}
         ${monthTx().some(shifted)?`<div class="sub" style="margin:-4px 0 9px">
           Entries marked <span class="pill" style="background:#EFEAF6;color:var(--violet)">next cycle</span>
-          were bought after their card's bill date, so they count here rather than in the month they were made.</div>`:""}
+          were bought before this period began, but their card's bill date lands inside it.</div>`:""}
         ${(()=>{const hit=filterTx(monthTx()).sort((a,b)=>(b.date+(b.time||"00:00")).localeCompare(a.date+(a.time||"00:00")));
           const cap=showAllTx?hit.length:(window.innerWidth<900?12:25);
           return hit.slice(0,cap);})().map(t=>{
@@ -1470,7 +1477,7 @@ function render(){
             :esc(t.sub)+(t.from?' <span style="color:var(--muted)">&middot; '+esc(t.from)+'</span>':"");
           return `<div class="tx"><div class="d">${t.date.slice(8)}/${t.date.slice(5,7)}</div>
             <div class="pill" style="background:${bg};color:${c}">${t.type.slice(0,3)}</div>
-            <div class="t">${t.rid?`<span class="pill" style="background:#E3F1EE;color:var(--teal)">auto</span> `:""}${where}${shifted(t)?` <span class="pill" style="background:#EFEAF6;color:var(--violet)">next cycle</span>`:""}${t.type==="expense"&&t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':""}</div>
+            <div class="t">${hasRule(t)?`<span class="pill" style="background:#E3F1EE;color:var(--teal)">auto</span> `:""}${where}${shifted(t)?` <span class="pill" style="background:#EFEAF6;color:var(--violet)">next cycle</span>`:""}${t.type==="expense"&&t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':""}</div>
             <div class="num" style="font-weight:600;color:${c};text-align:right">
               ${t.type==="income"||t.type==="refund"?"+":t.type==="expense"?"&minus;":""}${inr(t.type==="expense"?netAmt(t):t.amount)}
               ${t.type==="expense"&&refundsFor(t.id)?`<div style="font-size:10px;color:var(--muted);font-weight:400">of ${inr(t.amount)}</div>`:""}
@@ -1478,7 +1485,8 @@ function render(){
             ${outstanding(t)?`<button class="ic" style="color:var(--amber);border-color:var(--amber)"
               onclick="reimburse('${t.id}')" title="Record a contribution">${inr(outstanding(t))} due</button>`:""}
             <button class="ic" onclick="editEntry('${t.id}')" title="Edit">Edit</button>
-            ${t.rid?"":`<button class="ic" onclick="ruleFrom('${t.id}')" title="Repeat this every month">Repeat</button>`}
+            ${hasRule(t)?`<button class="ic" style="color:var(--teal);border-color:var(--teal)" onclick="setPane('recur');setMob('more')" title="This came from a repeat rule">Rule</button>`
+              :`<button class="ic" onclick="ruleFrom('${t.id}')" title="Turn this into a recurring entry">Repeat</button>`}
             <button class="x" onclick="del('${t.id}')" title="Delete">&times;</button></div>`;}).join("")}
         ${(()=>{const n=filterTx(monthTx()).length;
           if(!n)return carryTx().length?"":`<div class="empty">${txq?"Nothing matches that filter.":"Nothing logged yet."}</div>`;
@@ -1486,33 +1494,27 @@ function render(){
           if(n>lim)return `<button class="btn ghost sm" style="width:100%;margin-top:9px" onclick="toggleAllTx()">
             ${showAllTx?"Show fewer":"Show all "+n+" entries"}</button>`;
           return "";})()}
-        ${(()=>{const row=t=>{
-            const where=t.type==="transfer"?esc(t.from)+" &rarr; "+esc(t.to)
-              :t.type==="income"?esc(t.sub||t.note||"Income")+" &rarr; "+esc(t.to)
-                +(t.sub&&t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':"")
-              :esc(t.sub)+(t.from?' <span style="color:var(--muted)">&middot; '+esc(t.from)+'</span>':"");
-            return `<div class="tx" style="opacity:.62">
-              <div class="d">${t.date.slice(8)}/${t.date.slice(5,7)}</div>
-              <div class="pill" style="background:#EFEAF6;color:var(--violet);white-space:nowrap">${periodPill(txMonth(t))}</div>
-              <div class="t">${where}</div>
-              <div class="num" style="font-weight:600">${inr(t.amount)}</div>
-              <button class="ic" onclick="editEntry('${t.id}')" title="Edit">Edit</button>
-              <button class="x" onclick="del('${t.id}')" title="Delete">&times;</button></div>`;};
-          const byDate=(a,b)=>(b.date+(b.time||"00:00")).localeCompare(a.date+(a.time||"00:00"));
-          const back=carryBack().sort(byDate), fwd=carryFwd().sort(byDate);
-          const sec=(title,list,note)=>`<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">
+        ${carryTx().length?`
+          <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">
             <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
-              font-weight:600;margin-bottom:6px">${title}</div>${list.map(row).join("")}
-            <div class="sub" style="margin-top:7px">${note}</div></div>`;
-          const prevK=back.length?txMonth(back[0]):null;
-          return (back.length?sec(
-              "Before this period began &middot; counted in "+esc(periodLabel(prevK)),back,
-              periodCfg().mode==="income"
-                ?`Logged in ${mname(cur).split(" ")[0]} but before the income that started this period, so they belong to the previous period and are already in its totals. `
-                :`Logged before the ${periodCfg().day||16}th, so they belong to the previous period and are already in its totals. `
-              +`<a href="#" onclick="shift(-1);return false">View that period</a>`):"")
-            +(fwd.length?sec("Bought this month &middot; counted later",fwd,
-              "Past their card's bill date, so they land on the next statement and count in the next period's totals &mdash; not this one."):"");})()}
+              font-weight:600;margin-bottom:6px">Bought in this period &middot; counted in another</div>
+            ${carryTx().slice().sort((a,b)=>(b.date+(b.time||"00:00")).localeCompare(a.date+(a.time||"00:00"))).map(t=>{
+              const where=t.type==="transfer"?esc(t.from)+" &rarr; "+esc(t.to)
+                :t.type==="income"?esc(t.sub||t.note||"Income")+" &rarr; "+esc(t.to)
+              +(t.sub&&t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':"")
+                :esc(t.sub)+(t.from?' <span style="color:var(--muted)">&middot; '+esc(t.from)+'</span>':"");
+              return `<div class="tx" style="opacity:.62">
+                <div class="d">${t.date.slice(8)}/${t.date.slice(5,7)}</div>
+                <div class="pill" style="background:#EFEAF6;color:var(--violet)">${txMonth(t)<mk(cur)?"\u2190":"\u2192"} ${cycLabel(txMonth(t))}</div>
+                <div class="t">${where}</div>
+                <div class="num" style="font-weight:600">${inr(t.amount)}</div>
+                <button class="ic" onclick="editEntry('${t.id}')" title="Edit">Edit</button>
+                ${hasRule(t)?"":`<button class="ic" onclick="ruleFrom('${t.id}')" title="Repeat this entry">Repeat</button>`}
+                <button class="x" onclick="del('${t.id}')" title="Delete">&times;</button></div>`;}).join("")}
+            <div class="sub" style="margin-top:7px">A card's bill date moved these into a different statement,
+              so they count in that period's totals rather than this one. &larr; means an earlier period,
+              &rarr; a later one.</div>
+          </div>`:""}
       </div>
       </div>
     </div>
@@ -1700,6 +1702,8 @@ function recurPanel(){
         <input type="number" value="${r.amount}" onchange="setRule(${i},'amount',this.value)" style="width:96px" title="Amount">
         <input type="date" value="${r.start||""}" onchange="setRule(${i},'start',this.value)" style="width:134px" title="First occurrence">
         <input type="date" value="${r.end||""}" onchange="setRule(${i},'end',this.value)" style="width:134px" title="Stop after (optional)">
+        <input type="date" value="${r.since||""}" onchange="setRule(${i},'since',this.value)" style="width:134px"
+          title="Never post entries dated before this — set when the rule was created">
         <label class="tog" style="padding:0;gap:5px;font-size:11px">
           <input type="checkbox" ${r.paused?"checked":""} onchange="setRule(${i},'paused',this.checked)">paused</label>
       </div>
@@ -1707,6 +1711,7 @@ function recurPanel(){
         <span>${r.type}${r.from?" &middot; from "+esc(r.from):""}${r.to?" &rarr; "+esc(r.to):""}</span>
         <span class="num" style="color:${r.paused?"var(--muted)":"var(--teal)"}">
           ${r.paused?"paused":nx?"next "+fdate(nx):"finished"} &middot; ${r.n||0} posted</span></div>
+      ${r.since?`<div class="sub" style="font-size:10px">nothing posted before ${fdate(new Date(r.since))}</div>`:""}
     </div>`;}).join("")+
     `<div class="sub" style="margin-top:10px">Entries are created automatically when you open the tracker, up to
       today — never into the future, so balances stay real. Editing an amount changes future entries only;
@@ -1992,9 +1997,10 @@ function acctEdit(){
           <button class="mv" onclick="moveAcct(${i},${j},-1)" title="Move up">&#9650;</button>
           <button class="mv" onclick="moveAcct(${i},${j},1)" title="Move down">&#9660;</button>
           <input type="text" value="${esc(a.name)}" onchange="renameAcct(${i},${j},this.value)">
-          <input type="number" value="${Math.round(balance(a.name)*100)/100}"
+          <span style="font-size:10px;color:var(--muted);width:34px;text-align:right">${g.kind==="liability"?"owed":"bal"}</span>
+          <input type="number" value="${Math.round((g.kind==="liability"?-balance(a.name):balance(a.name))*100)/100}"
             onchange="${fixing===(i+"-"+j)?"correctBalance":"setBalance"}(${i},${j},this.value)"
-            title="${fixing===(i+"-"+j)?"Correction mode — this will not create an entry":"Current balance — a change is booked as an adjustment"}"
+            title="${g.kind==="liability"?"What you owe on this card or loan, as a positive number":"Current balance"} — ${fixing===(i+"-"+j)?"correction mode, no entry will be created":"a change is booked as an adjustment"}"
             style="width:110px;${fixing===(i+"-"+j)?"outline:2px solid var(--amber);background:#FDF4E7":""}">
           <button class="mv" onclick="toggleFix('${i}-${j}')"
             title="Correct a mistyped balance without creating an entry"
@@ -2103,7 +2109,8 @@ function acctEdit(){
     <div class="sub" style="margin-top:8px">The number beside each account is its <b>current</b> balance. Type a
       different figure and the difference is booked under <b>${ADJ}</b> as income or an expense, dated today —
       history is never rewritten. Edit that entry later to file it under the right category once you know what it
-      was. For a credit card or loan, what you owe is a negative number.
+      was. For a credit card or loan the box shows <b>what you owe</b> as a positive number — type ₹11,140 owed as
+      11140, never as a minus figure.
       <br><br>Typed the wrong figure in the first place? Press <b>fix</b> beside the account, then enter the right
       balance — that moves the starting point instead and creates no entry. <b>undo</b> deletes the
       ${ADJ} entries already booked on that account.</div>
@@ -2142,7 +2149,7 @@ function captureDraft(){
   if(any)draft=d;
 }
 function restoreDraft(){
-  if(!draft)return;
+  if(editTx||!draft)return;   // an open edit owns the form
   DRAFT_IDS.forEach(id=>{const e=document.getElementById(id);
     if(e&&draft[id]!==undefined&&draft[id]!==""){
       if(e.tagName==="SELECT"){ if([...e.options].some(o=>o.value===draft[id]))e.value=draft[id]; }
@@ -2240,7 +2247,8 @@ function ruleFrom(id){
   if((S.rules||[]).some(r=>r.srcId===id))return toast("Already repeating");
   const r={id:Date.now()+"-"+Math.random().toString(36).slice(2,6),srcId:id,
     type:t.type,sub:t.sub,amount:t.amount,from:t.from,to:t.to,note:t.note,
-    freq:"monthly",start:t.date,end:"",n:1,paused:false};   // n=1: this entry counts as the first
+    freq:"monthly",start:t.date,end:"",n:1,paused:false,
+    since:todayISO()};   // nothing is posted for dates before the rule was created
   t.rid=r.id;                     // the entry you clicked becomes the rule's first occurrence
   S.rules.push(r); save(); pane="recur"; render();
   toast("Repeating "+(t.sub||t.note||"entry")+" "+FREQ[r.freq].toLowerCase());}
@@ -2249,12 +2257,17 @@ function setRule(i,k,v){
   if(k==="amount")r[k]=+v||0;
   else if(k==="paused")r[k]=!!v;
   else r[k]=v;
-  if(k==="start"||k==="freq")r.n=0;      // re-anchor the schedule
+  if(k==="start"||k==="freq"){r.n=0;if(!r.since)r.since=todayISO();}   // re-anchor, still no backdating
   save(); const made=runRules(); render();
   if(made)toast("Added "+made+" entr"+(made>1?"ies":"y"));}
 function delRule(i){
   const k="r"+i; if(arm!==k){arm=k;return render();}
-  arm=null; S.rules.splice(i,1); save(); render(); toast("Rule removed — entries already created stay");}
+  arm=null;
+  const r=S.rules[i], id=r&&r.id;
+  let n=0;
+  if(id)S.txs.forEach(t=>{if(t.rid===id){delete t.rid;n++;}});   // entries stay, but are no longer tied to a rule
+  S.rules.splice(i,1); save(); render();
+  toast("Rule removed"+(n?" — "+n+" entr"+(n>1?"ies":"y")+" kept, now ordinary entries":""));}
 function runNow(){const made=runRules();render();
   toast(made?"Added "+made+" entr"+(made>1?"ies":"y"):"Nothing due yet");}
 function setQ(v){txq=v;showAllTx=false;
