@@ -212,7 +212,7 @@ const DEF_ITREE=[
 ];
 const freshITree=()=>DEF_ITREE.map(([c,subs])=>({name:c,subs:subs.map(n=>({name:n}))}));
 const UNASSIGNED="Unassigned", NOACCT="No account";
-const BUILD="2026-09-24a";
+const BUILD="2026-09-24c";
 const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:"",period:{mode:"calendar",day:1,subs:[]}};
 let cur=new Date(new Date().getFullYear(),new Date().getMonth(),1), view="variable", pane="cats", txType="expense", mainTab="overview";
@@ -307,12 +307,20 @@ function addCycle(k,n){
 }
 const cycLabel=k=>k?new Date(+k.split("-")[0],+k.split("-")[1]-1,1)
   .toLocaleDateString("en-IN",{month:"short"}):"—";
-function emiStats(e,stmtDay){
+function emiStats(e,stmtDay,dueDay){
   const rows=planRows(e), n=rows.length, lag=e.gstLag?1:0;
-  const sd=+stmtDay||0;
-  const nowCyc=cycleOf(isoOf(new Date()),sd);
+  const sd=+stmtDay||0, dd=+dueDay||0;
+  const today=isoOf(new Date());
+  const nowCyc=cycleOf(today,sd);
+  const lateAfter=c=>{                       // the pay-by date for the statement that closed cycle c
+    if(!c||!sd||!dd)return null;
+    const [yy,mm]=c.split("-").map(Number);
+    const st=new Date(yy,mm-1,Math.min(sd,dimOf(yy,mm-1)));
+    return isoOf(dueAfter(st,dd));
+  };
   let pPaid=0,iPaid=0,gPaid=0,pLeft=0,iLeft=0,gLeft=0,total=0,gTotal=0;
   let curP=0,curI=0,curG=0,paidCount=0,nextCyc=null;
+  let odP=0,odI=0,odG=0,odN=0,billedP=0,billedI=0,billedG=0,billedN=0;
   const detail=rows.map((r,k)=>{
     const P=+r.p||0, I=+r.i||0, G=gstOf(I);
     const date=rowDate(e,k);
@@ -326,9 +334,11 @@ function emiStats(e,stmtDay){
     if(paid){pPaid+=P;iPaid+=I;paidCount++;} else {pLeft+=P;iLeft+=I;
       if(!nextCyc||(pc&&pc<nextCyc))nextCyc=pc;}
     if(gpaid)gPaid+=G; else {gLeft+=G; if(!nextCyc||(gc&&gc<nextCyc))nextCyc=gc;}
-    if(pc===nowCyc&&!paid){curP+=P;curI+=I;}
-    if(gc===nowCyc&&!gpaid)curG+=G;
-    return {k,date,pc,gc,P,I,G,paid,gpaid,due:pc===nowCyc&&!paid};
+    const payBy=lateAfter(pc), late=!!(payBy&&today>payBy);
+    if(pc&&pc<=nowCyc&&!paid){curP+=P;curI+=I; if(pc<nowCyc){billedP+=P;billedI+=I;billedN++; if(late){odP+=P;odI+=I;odN++;}}}
+    if(gc&&gc<=nowCyc&&!gpaid){curG+=G; if(gc<nowCyc)billedG+=G;}
+    return {k,date,pc,gc,P,I,G,paid,gpaid,payBy,
+      due:!!(pc&&pc===nowCyc&&!paid), billed:!!(pc&&pc<nowCyc&&!paid), overdue:late&&!paid};
   });
   const byCycle={};
   const bump=(c,f,v)=>{if(!c)return;(byCycle[c]=byCycle[c]||{p:0,i:0,g:0,srcI:null})[f]+=v;};
@@ -347,6 +357,8 @@ function emiStats(e,stmtDay){
     paidSoFar:pPaid+iPaid+gPaid, total, gTotal,
     totalLeft:pLeft+iLeft+gLeft,
     monthly:curP+curI+curG, thisCycle:curP+curI+curG, chargeNow:curI+curG,
+    overdue:odP+odI+odG, overdueCount:odN,
+    billedUnpaid:billedP+billedI+billedG, billedCount:billedN,
     trailingGst:!!lag&&pLeft===0&&gLeft>0,
     nextDate:null,
     done:n>0&&pLeft===0&&iLeft===0&&gLeft===0};
@@ -369,7 +381,7 @@ function dueAfter(stmt,dueDay){          // first dueDay strictly after a statem
 function ownHold(a){
   const out=-balance(a.name);
   let emiP=0,emiI=0,emiG=0;
-  (a.emis||[]).forEach(e=>{const es=emiStats(e,a.stmtDay);
+  (a.emis||[]).forEach(e=>{const es=emiStats(e,a.stmtDay,a.dueDay);
     emiP+=es.principalLeft; emiI+=es.interestLeft; emiG+=es.gstLeft;});
   return {out,emiP,emiI,emiG,emiBlock:emiP+emiI,blocked:out+emiP+emiI};
 }
@@ -410,7 +422,7 @@ function cardStats(a){
   const cycle=cycleSpend-cycleCredit;
   // instalments the bank will add to the same statement, GST included
   let emiNext=0,emiNextGst=0,emiNextP=0,emiNextI=0;
-  (a.emis||[]).forEach(e=>{const es=emiStats(e,a.stmtDay);
+  (a.emis||[]).forEach(e=>{const es=emiStats(e,a.stmtDay,a.dueDay);
     emiNext+=es.thisCycle; emiNextGst+=es.gst; emiNextP+=es.principal; emiNextI+=es.int;});
   const nextBill=cycle+emiNext;
   const stmtDue=lastStmt?Math.max(0,out-cycle):0;          // billed, not yet paid
@@ -973,7 +985,7 @@ function unmarkAll(i,j,ei){
   save();render();toast("All instalments marked unpaid — they now hold your limit again");}
 function markThrough(i,j,ei){
   const a=S.groups[i].accts[j], e=a.emis[ei];
-  const st=emiStats(e,a.stmtDay); let n=0;
+  const st=emiStats(e,a.stmtDay,a.dueDay); let n=0;
   st.detail.forEach(d=>{const r=e.rows[d.k];
     if(d.pc&&d.pc<=st.nowCyc&&!r.paid){r.paid=true;if(!e.gstLag)r.gpaid=true;n++;}
     if(e.gstLag&&d.gc&&d.gc<=st.nowCyc&&!r.gpaid)r.gpaid=true;});
@@ -993,7 +1005,7 @@ function delEmi(i,j,ei){const k="e"+i+"-"+j+"-"+ei; if(arm!==k){arm=k;return ren
 function postInstalment(gi,ai,ei,k){
   const a=S.groups[gi].accts[ai], e=a.emis[ei], r=planRows(e)[k];
   if(!r)return;
-  const st=emiStats(e,a.stmtDay), d=st.detail.find(x=>x.k===k);
+  const st=emiStats(e,a.stmtDay,a.dueDay), d=st.detail.find(x=>x.k===k);
   if(!d)return;
   if(S.txs.some(t=>t.emiRef===e.id+"#"+k))return toast("That instalment is already in your entries");
   const pick=allSubNames().find(n=>/credit card emi/i.test(n))
@@ -1263,7 +1275,7 @@ function extraAnalytics(k,keys,labs,exp,income){
     if(h.mode==="cat"){if((h.type||"V")==="F")fixedB+=+h.budget||0;}
     else h.subs.forEach(x=>{if(x.type==="F")fixedB+=+x.budget||0;});});
   let emiDue=0; allEmis().forEach(({a,e})=>{
-    const st=emiStats(e,a.stmtDay);
+    const st=emiStats(e,a.stmtDay,a.dueDay);
     st.detail.forEach(d=>{ if(!d.paid&&d.pc===nk)emiDue+=d.P+d.I; if(!d.gpaid&&d.gc===nk)emiDue+=d.G; });});
   const recur=(S.rules||[]).filter(r=>!r.paused&&r.type==="expense").reduce((a,r)=>a+(+r.amount||0),0);
   if(fixedB||emiDue||recur)out.push(`<div class="card"><h2>Already committed &middot; ${cycLabel(nk)}</h2>
@@ -1941,18 +1953,20 @@ function cardsPanel(){
 function emiPanel(){
   const list=allEmis().filter(x=>planRows(x.e).length>0);
   if(!list.length)return "";
-  const active=list.filter(x=>!emiStats(x.e,x.a.stmtDay).done);
-  let mo=0,pl=0,il=0;
-  active.forEach(x=>{const st=emiStats(x.e,x.a.stmtDay);mo+=st.thisCycle;pl+=st.principalLeft;il+=st.interestLeft;});
+  const active=list.filter(x=>!emiStats(x.e,x.a.stmtDay,x.a.dueDay).done);
+  let mo=0,pl=0,il=0,od=0,odn=0,bu=0,bun=0;
+  active.forEach(x=>{const st=emiStats(x.e,x.a.stmtDay,x.a.dueDay);mo+=st.thisCycle;pl+=st.principalLeft;il+=st.interestLeft;
+    od+=st.overdue;odn+=st.overdueCount;bu+=st.billedUnpaid;bun+=st.billedCount;});
   return `<div style="margin-top:14px;padding-top:12px;border-top:2px solid var(--line)">
     <h2>EMI plans on cards</h2>
     <div class="runway" style="margin-bottom:12px">
-      <div class="stat"><div class="k">Due this cycle</div><div class="v">${inr(mo)}</div></div>
+      <div class="stat"><div class="k">Due now</div><div class="v">${inr(mo)}</div>
+        ${bu>0?`<div style="font-size:10px;margin-top:3px;color:${od>0?"var(--red)":"var(--amber)"}">incl. ${inr(bu)} already billed${od>0?", "+inr(od)+" late":""}</div>`:""}</div>
       <div class="stat"><div class="k">Principal left</div><div class="v">${inr(pl)}</div></div>
       <div class="stat"><div class="k">Interest left</div><div class="v" style="color:var(--red)">${inr(il)}</div></div>
       <div class="stat"><div class="k">Active plans</div><div class="v">${active.length}</div></div>
     </div>
-    ${list.map(({a,e})=>{const st=emiStats(e,a.stmtDay);
+    ${list.map(({a,e})=>{const st=emiStats(e,a.stmtDay,a.dueDay);
       const pct=st.cycles?(st.elapsed/st.cycles)*100:0;
       return `<div style="padding:10px 0;border-bottom:1px solid var(--line);${st.done?"opacity:.5":""}">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
@@ -1969,7 +1983,8 @@ function emiPanel(){
         <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);margin-top:6px;flex-wrap:wrap">
           <span>${st.done?"finished"
             :st.trailingGst?`all ${st.n} instalments paid &middot; <b style="color:var(--amber)">GST-only cycle left</b>`
-            :`${st.paid} of ${st.n} paid &middot; ${st.left} left${st.lag?` &middot; +1 GST cycle`:""}`}</span>
+            :`${st.paid} of ${st.n} paid &middot; ${st.left} left${st.lag?` &middot; +1 GST cycle`:""}${st.overdueCount?` &middot; <b style="color:var(--red)">${st.overdueCount} late</b>`
+              :st.billedCount?` &middot; <b style="color:var(--amber)">${st.billedCount} billed, unpaid</b>`:""}`}</span>
           <span>left: principal <span class="num">${inr(st.principalLeft)}</span> &middot;
                 interest <span class="num" style="color:var(--red)">${inr(st.interestLeft)}</span></span>
           ${st.done?"":`<button class="ic" onclick="logInterest('${esc(a.name).replace(/'/g,"&#39;")}',${st.chargeNow})">Log this cycle's ${inr(st.chargeNow)}</button>`}
@@ -2042,7 +2057,7 @@ function acctEdit(){
             style="width:112px">
           <span style="font-size:10px;color:var(--muted);flex:1">limit &middot; bill day &middot; due day &middot; shared-limit group</span>
         </div>
-        ${(a.emis||[]).map((e,ei)=>{const st=emiStats(e,a.stmtDay);const key=i+"-"+j+"-"+ei;return `
+        ${(a.emis||[]).map((e,ei)=>{const st=emiStats(e,a.stmtDay,a.dueDay);const key=i+"-"+j+"-"+ei;return `
           <div style="background:var(--card);border-radius:8px;margin-bottom:6px;padding:8px">
             <div class="ed" style="flex-wrap:wrap">
               <input type="text" value="${esc(e.label||"")}" placeholder="What it was"
@@ -2068,15 +2083,15 @@ function acctEdit(){
                 <span style="width:${e.gstLag?110:54}px">Settled</span><span style="width:22px"></span></div>
               ${st.detail.map(d=>{
                 const tot=d.P+d.I+d.G, isNow=d.pc===st.nowCyc;
-                return `<div class="ed" style="gap:6px;padding:2px 4px;${d.paid&&!isNow?"opacity:.45":""}">
+                return `<div class="ed" style="gap:6px;padding:2px 4px;${d.paid&&!isNow?"opacity:.45":""}${d.overdue?";background:#FBE9EB;border-radius:5px":d.billed?";background:#FDF4E7;border-radius:5px":""}">
                   <span class="num" style="width:24px;font-size:11px;color:${isNow?"var(--violet)":"var(--muted)"}">${d.k+1}</span>
                   <input type="date" value="${d.date}" onchange="setRow(${i},${j},${ei},${d.k},'d',this.value)" style="width:126px">
                   <input type="number" value="${st.rows[d.k].p||0}" onchange="setRow(${i},${j},${ei},${d.k},'p',this.value)" style="width:84px">
                   <input type="number" value="${st.rows[d.k].i||0}" onchange="setRow(${i},${j},${ei},${d.k},'i',this.value)" style="width:74px">
                   <span class="num" style="width:60px;text-align:right;font-size:11px;color:var(--muted)">${inr(d.G)}</span>
                   <span class="num" style="width:74px;text-align:right;font-size:11px;font-weight:600">${inr(tot)}</span>
-                  <span style="width:88px;text-align:right;font-size:10px;color:${d.due?"var(--violet)":"var(--muted)"}">
-                    bills ${cycLabel(d.pc)}${d.gc!==d.pc?` &middot; GST ${cycLabel(d.gc)}`:""}</span>
+                  <span style="width:88px;text-align:right;font-size:10px;color:${d.overdue?"var(--red)":d.due?"var(--violet)":"var(--muted)"}">
+                    ${d.overdue?"<b>late</b> &middot; ":d.billed?"<b>billed</b> &middot; ":""}bills ${cycLabel(d.pc)}${d.billed&&d.payBy?" &middot; pay by "+fdate(new Date(d.payBy)):""}${d.gc!==d.pc?` &middot; GST ${cycLabel(d.gc)}`:""}</span>
                   <label class="tog" style="padding:0;gap:4px;font-size:10px" title="Tick once you've paid the bill carrying this instalment">
                     <input type="checkbox" ${d.paid?"checked":""} onchange="setPaid(${i},${j},${ei},${d.k},this.checked)">paid</label>
                   ${e.gstLag?`<label class="tog" style="padding:0;gap:4px;font-size:10px" title="GST is billed a cycle later">
