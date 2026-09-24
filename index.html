@@ -212,7 +212,7 @@ const DEF_ITREE=[
 ];
 const freshITree=()=>DEF_ITREE.map(([c,subs])=>({name:c,subs:subs.map(n=>({name:n}))}));
 const UNASSIGNED="Unassigned", NOACCT="No account";
-const BUILD="2026-09-17h";
+const BUILD="2026-09-24a";
 const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:"",period:{mode:"calendar",day:1,subs:[]}};
 let cur=new Date(new Date().getFullYear(),new Date().getMonth(),1), view="variable", pane="cats", txType="expense", mainTab="overview";
@@ -653,21 +653,24 @@ function periodLabel(key){
   if(periodIsOpen(key))return fdate(a)+" \u2013 ongoing";
   return fdate(a)+" \u2013 "+fdate(b)+" "+b.getFullYear()+(pre?" (before first income)":"");
 }
-function effDate(t){                           // card purchases after the cutoff land on the next statement date
+// the statement that will bill a card purchase: the first cutoff on or after the purchase date
+function billDate(iso,stmtDay){
+  const d=new Date(iso), sd=+stmtDay;
+  if(!sd)return iso;
+  const same=new Date(d.getFullYear(),d.getMonth(),Math.min(sd,dimOf(d.getFullYear(),d.getMonth())));
+  if(d<=same)return isoOf(same);
+  const nx=new Date(d.getFullYear(),d.getMonth()+1,1);
+  return isoOf(new Date(nx.getFullYear(),nx.getMonth(),Math.min(sd,dimOf(nx.getFullYear(),nx.getMonth()))));
+}
+function effDate(t){
   if(t.type==="expense"&&t.from){
     const c=cardOf(t.from);
-    if(c&&+c.stmtDay){
-      const d=new Date(t.date);
-      if(d.getDate()>+c.stmtDay){
-        const n=new Date(d.getFullYear(),d.getMonth()+1,Math.min(+c.stmtDay,dimOf(d.getFullYear(),d.getMonth()+1)));
-        return isoOf(n);
-      }
-    }
+    if(c&&+c.stmtDay)return billDate(t.date,c.stmtDay);
   }
   return t.date;
 }
 function txMonth(t){return periodOf(effDate(t));}
-const shifted=t=>txMonth(t)!==t.date.slice(0,7);
+const shifted=t=>effDate(t)!==t.date;
 const hasRule=t=>!!(t.rid&&(S.rules||[]).some(r=>r.id===t.rid));
 const FREQ={daily:"Daily",weekly:"Weekly",monthly:"Monthly",quarterly:"Every 3 months",yearly:"Yearly"};
 function occDate(r,n){
@@ -987,6 +990,21 @@ function setEmi(i,j,ei,k,v){const e=S.groups[i].accts[j].emis[ei];
   save();render();}
 function delEmi(i,j,ei){const k="e"+i+"-"+j+"-"+ei; if(arm!==k){arm=k;return render();}
   arm=null; S.groups[i].accts[j].emis.splice(ei,1); save(); render();}
+function postInstalment(gi,ai,ei,k){
+  const a=S.groups[gi].accts[ai], e=a.emis[ei], r=planRows(e)[k];
+  if(!r)return;
+  const st=emiStats(e,a.stmtDay), d=st.detail.find(x=>x.k===k);
+  if(!d)return;
+  if(S.txs.some(t=>t.emiRef===e.id+"#"+k))return toast("That instalment is already in your entries");
+  const pick=allSubNames().find(n=>/credit card emi/i.test(n))
+    ||allSubNames().find(n=>/loan.*emi|emi/i.test(n))||allSubNames().find(n=>/interest/i.test(n));
+  if(!pick)return toast("Add a subcategory for EMIs first");
+  S.txs.push({id:Date.now()+"-"+Math.random().toString(36).slice(2,7),emiRef:e.id+"#"+k,
+    date:d.date,time:"00:00",type:"expense",sub:pick,amount:Math.round((d.P+d.I+d.G)*100)/100,
+    from:a.name,note:(e.label||"EMI")+" instalment "+(k+1)+"/"+st.n});
+  r.paid=true; if(!e.gstLag)r.gpaid=true;
+  save();render();
+  toast("Posted "+inr(d.P+d.I+d.G)+" to "+pick+" and marked instalment "+(k+1)+" paid");}
 function logInterest(an,amt){
   if(!amt)return toast("No interest set on that plan");
   const pick=allSubNames().find(n=>/interest/i.test(n))||allSubNames().find(n=>/loan|financ/i.test(n));
@@ -1462,8 +1480,8 @@ function render(){
               <span style="color:var(--teal)">+${inr(inSum)}</span> &nbsp;
               <span style="color:var(--red)">&minus;${inr(outSum)}</span></span></div>`:""}`;})()}
         ${monthTx().some(shifted)?`<div class="sub" style="margin:-4px 0 9px">
-          Entries marked <span class="pill" style="background:#EFEAF6;color:var(--violet)">next cycle</span>
-          were bought before this period began, but their card's bill date lands inside it.</div>`:""}
+          Card purchases count on the statement that bills them, not the day you bought them &mdash;
+          the violet tag shows that bill date.</div>`:""}
         ${(()=>{const hit=filterTx(monthTx()).sort((a,b)=>(b.date+(b.time||"00:00")).localeCompare(a.date+(a.time||"00:00")));
           const cap=showAllTx?hit.length:(window.innerWidth<900?12:25);
           return hit.slice(0,cap);})().map(t=>{
@@ -1477,7 +1495,7 @@ function render(){
             :esc(t.sub)+(t.from?' <span style="color:var(--muted)">&middot; '+esc(t.from)+'</span>':"");
           return `<div class="tx"><div class="d">${t.date.slice(8)}/${t.date.slice(5,7)}</div>
             <div class="pill" style="background:${bg};color:${c}">${t.type.slice(0,3)}</div>
-            <div class="t">${hasRule(t)?`<span class="pill" style="background:#E3F1EE;color:var(--teal)">auto</span> `:""}${where}${shifted(t)?` <span class="pill" style="background:#EFEAF6;color:var(--violet)">next cycle</span>`:""}${t.type==="expense"&&t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':""}</div>
+            <div class="t">${hasRule(t)?`<span class="pill" style="background:#E3F1EE;color:var(--teal)">auto</span> `:""}${where}${shifted(t)?` <span class="pill" style="background:#EFEAF6;color:var(--violet)" title="Billed on the statement of ${fdate(new Date(effDate(t)))}">bills ${fdate(new Date(effDate(t)))}</span>`:""}${t.type==="expense"&&t.note?' <span style="color:var(--muted)">&middot; '+esc(t.note)+'</span>':""}</div>
             <div class="num" style="font-weight:600;color:${c};text-align:right">
               ${t.type==="income"||t.type==="refund"?"+":t.type==="expense"?"&minus;":""}${inr(t.type==="expense"?netAmt(t):t.amount)}
               ${t.type==="expense"&&refundsFor(t.id)?`<div style="font-size:10px;color:var(--muted);font-weight:400">of ${inr(t.amount)}</div>`:""}
@@ -2063,6 +2081,8 @@ function acctEdit(){
                     <input type="checkbox" ${d.paid?"checked":""} onchange="setPaid(${i},${j},${ei},${d.k},this.checked)">paid</label>
                   ${e.gstLag?`<label class="tog" style="padding:0;gap:4px;font-size:10px" title="GST is billed a cycle later">
                     <input type="checkbox" ${d.gpaid?"checked":""} onchange="setGPaid(${i},${j},${ei},${d.k},this.checked)">gst</label>`:""}
+                  <button class="mv" onclick="postInstalment(${i},${j},${ei},${d.k})"
+                    title="Add this instalment to your entries and mark it paid">&#8595;</button>
                   <button class="mv" onclick="delRow(${i},${j},${ei},${d.k})" title="Remove">&times;</button>
                 </div>`;}).join("")}
               <div class="addrow" style="flex-wrap:wrap;gap:5px">
