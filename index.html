@@ -212,7 +212,7 @@ const DEF_ITREE=[
 ];
 const freshITree=()=>DEF_ITREE.map(([c,subs])=>({name:c,subs:subs.map(n=>({name:n}))}));
 const UNASSIGNED="Unassigned", NOACCT="No account";
-const BUILD="2026-09-24e";
+const BUILD="2026-11-24a";
 const KEY="krish-tracker:v4", OLD="krish-tracker:v3";
 let S={tree:null,itree:null,groups:null,txs:[],rules:[],income:0,budgetStart:"",period:{mode:"calendar",day:1,subs:[]}};
 let cur=new Date(new Date().getFullYear(),new Date().getMonth(),1), view="variable", pane="cats", txType="expense", mainTab="overview";
@@ -293,9 +293,9 @@ function rowDate(e,k){                       // explicit date, else start + k mo
 }
 function cycleOf(iso,stmtDay){               // which statement cycle a date falls into
   if(!iso)return null;
-  const d=new Date(iso);
-  let y=d.getFullYear(), m=d.getMonth();
-  if(stmtDay&&d.getDate()>stmtDay)m+=1;      // after the cutoff -> next cycle
+  const [yy,mm,dd]=iso.slice(0,10).split("-").map(Number);
+  let y=yy, m=mm-1;
+  if(stmtDay&&dd>stmtDay)m+=1;               // after the cutoff -> next cycle
   const n=new Date(y,m,1);
   return n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0");
 }
@@ -334,7 +334,7 @@ function emiStats(e,stmtDay,dueDay,floor){
   };
   let total=0,gTotal=0,pLeft=0,iLeft=0,gLeft=0,settledN=0;
   const detail=rows.map((r,k)=>{
-    const P=+r.p||0, I=+r.i||0, G=gstOf(I);
+    const P=+r.p||0, I=+r.i||0, gOv=(r.g!==undefined&&r.g!==null&&r.g!==""), G=gOv?(+r.g||0):gstOf(I);
     const date=rowDate(e,k);
     const pc=cycleOf(date,sd), gc=pc?addCycle(pc,lag):null;
     const ps=stateOf(pc), gs=stateOf(gc);
@@ -342,7 +342,7 @@ function emiStats(e,stmtDay,dueDay,floor){
     total+=P+I+G; gTotal+=G;
     if(pDone)settledN++; else {pLeft+=P;iLeft+=I;}
     if(!gDone)gLeft+=G;
-    return {k,date,pc,gc,P,I,G,pState:ps,gState:gs,paid:pDone,gpaid:gDone,
+    return {k,date,pc,gc,P,I,G,gOv,gAuto:gstOf(I),pState:ps,gState:gs,paid:pDone,gpaid:gDone,
       due:pc===nowCyc,billed:false,overdue:false,payBy:null};
   });
   const byCycle={};
@@ -452,12 +452,12 @@ function cardStats(a){
   const lastStmt=onDay(+a.stmtDay,now);
   const nextStmt=nextDay(+a.stmtDay,now);
   const lastISO=lastStmt?isoOf(lastStmt):null;             // a charge dated on the statement day is on that statement
-  const cycleSpend=lastStmt?S.txs.filter(t=>t.from===a.name&&t.type==="expense"&&t.date>lastISO)
+  const cycleSpend=lastStmt?S.txs.filter(t=>t.from===a.name&&t.type==="expense"&&effDate(t)>lastISO)
     .reduce((x,t)=>x+t.amount,0):0;
   // credits posted after the statement — cashback, reversals — land on the next bill.
   // transfers are excluded: paying the bill settles what was already billed.
   const cycleCredit=lastStmt?S.txs.filter(t=>t.to===a.name&&(t.type==="income"||t.type==="refund")
-    &&t.date>lastISO).reduce((x,t)=>x+t.amount,0):0;
+    &&billDate(t.date,a.stmtDay,false)>lastISO).reduce((x,t)=>x+t.amount,0):0;
   const cycle=cycleSpend-cycleCredit;
   // instalments the bank will add to the same statement, GST included
   let emiNext=0,emiNextGst=0,emiNextP=0,emiNextI=0;
@@ -710,19 +710,21 @@ function periodLabel(key){
   if(periodIsOpen(key))return fdate(a)+" \u2013 ongoing";
   return fdate(a)+" \u2013 "+fdate(b)+" "+b.getFullYear()+(pre?" (before first income)":"");
 }
-// the statement that will bill a card purchase: the first cutoff on or after the purchase date
-function billDate(iso,stmtDay){
-  const d=new Date(iso), sd=+stmtDay;
-  if(!sd)return iso;
-  const same=new Date(d.getFullYear(),d.getMonth(),Math.min(sd,dimOf(d.getFullYear(),d.getMonth())));
-  if(d<=same)return isoOf(same);
-  const nx=new Date(d.getFullYear(),d.getMonth()+1,1);
-  return isoOf(new Date(nx.getFullYear(),nx.getMonth(),Math.min(sd,dimOf(nx.getFullYear(),nx.getMonth()))));
+// the statement that bills a card charge. Before the statement day -> that month's statement.
+// ON the statement day: EMI lines (posted 00:00 by the bank) are on that statement; ordinary
+// purchases made that day go to the next one, as HDFC shows them. After it -> next month's.
+function billDate(iso,stmtDay,onCut){
+  const sd=+stmtDay;
+  if(!sd||!iso)return iso;
+  const [y,m,dd]=iso.slice(0,10).split("-").map(Number);
+  const cut=Math.min(sd,dimOf(y,m-1));
+  if(dd<cut||(dd===cut&&onCut))return isoOf(new Date(y,m-1,cut));
+  return isoOf(new Date(y,m,Math.min(sd,dimOf(y,m))));
 }
 function effDate(t){
   if(t.type==="expense"&&t.from){
     const c=cardOf(t.from);
-    if(c&&+c.stmtDay)return billDate(t.date,c.stmtDay);
+    if(c&&+c.stmtDay)return billDate(t.date,c.stmtDay,!!t.emiRef);
   }
   return t.date;
 }
@@ -1021,7 +1023,10 @@ function delRow(i,j,ei,k){
 function setRow(i,j,ei,k,f,v){
   setTimeout(()=>{if(syncEmis())render();},0);
   const e=S.groups[i].accts[j].emis[ei];
-  planRows(e)[k][f]=(f==="d")?v:(+v||0); save();render();}
+  const r=planRows(e)[k];
+  if(f==="g"){ if(v===""||v===null)delete r.g; else r.g=Math.round((+v||0)*100)/100; }
+  else r[f]=(f==="d")?v:(+v||0);
+  save();render();}
 function setPaid(i,j,ei,k,v){
   const e=S.groups[i].accts[j].emis[ei], r=planRows(e)[k];
   r.paid=!!v; if(!e.gstLag)r.gpaid=!!v;      // GST settles with the instalment unless it lags
@@ -2128,7 +2133,7 @@ function acctEdit(){
                 <span style="width:24px">#</span><span style="width:126px">Date</span>
                 <span style="width:84px;text-align:right">Principal</span>
                 <span style="width:74px;text-align:right">Interest</span>
-                <span style="width:60px;text-align:right">GST</span>
+                <span style="width:74px;text-align:right" title="Blank = 18% of interest. Type the bank's figure to override.">GST</span>
                 <span style="width:74px;text-align:right">Total</span>
                 <span style="width:88px;text-align:right">Cycle</span>
                 <span style="width:${e.gstLag?110:54}px">Settled</span><span style="width:22px"></span></div>
@@ -2139,7 +2144,9 @@ function acctEdit(){
                   <input type="date" value="${d.date}" onchange="setRow(${i},${j},${ei},${d.k},'d',this.value)" style="width:126px">
                   <input type="number" value="${st.rows[d.k].p||0}" onchange="setRow(${i},${j},${ei},${d.k},'p',this.value)" style="width:84px">
                   <input type="number" value="${st.rows[d.k].i||0}" onchange="setRow(${i},${j},${ei},${d.k},'i',this.value)" style="width:74px">
-                  <span class="num" style="width:60px;text-align:right;font-size:11px;color:var(--muted)">${inr(d.G)}</span>
+                  <input type="number" step="0.01" value="${d.gOv?st.rows[d.k].g:""}" placeholder="${(Math.round(d.gAuto*100)/100).toFixed(2)}"
+                    title="${d.gOv?"Bank figure \u2014 clear the box to go back to 18% of interest":"Auto: 18% of interest. Type the bank's GST to override."}"
+                    onchange="setRow(${i},${j},${ei},${d.k},'g',this.value)" style="width:74px;${d.gOv?"color:var(--violet);font-weight:600":""}">
                   <span class="num" style="width:74px;text-align:right;font-size:11px;font-weight:600">${inr(tot)}</span>
                   <span style="width:150px;text-align:right;font-size:10px;color:${d.pState==="posted"?"var(--teal)":d.pState==="before"?"var(--muted)":d.due?"var(--violet)":"var(--muted)"}">
                     ${d.pState==="posted"?"posted "+fdate(new Date(stmtDateOf(d.pc,+a.stmtDay)))
